@@ -1,0 +1,151 @@
+package com.api_sincdb.domain.usuario.service;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
+import org.springframework.stereotype.Service;
+
+import com.api_sincdb.enums.TipoRole;
+import com.api_sincdb.domain.role.repository.RoleRepository;
+import com.api_sincdb.domain.usuario.dto.AuthLoginDTO;
+import com.api_sincdb.domain.usuario.model.Role;
+import com.api_sincdb.domain.usuario.model.Usuario;
+import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
+import com.api_sincdb.security.JWTTokenAutenticacaoService;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+@Service
+public class AuthService {
+
+    @Autowired
+    private JWTTokenAutenticacaoService jwtTokenAutenticacaoService;
+
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
+    @Autowired
+    private UsuarioService usuarioService;
+
+    @Autowired
+    private UsuarioRepository repository;
+
+    @Autowired
+    private RoleRepository roleRepository;
+
+    @Autowired
+    private UsuarioOnlineService onlineService;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
+
+    public Map efetuarLogin(AuthLoginDTO obj, HttpServletResponse response, HttpServletRequest request)
+            throws Exception {
+
+        Boolean isAreaDev = obj.getIsAreaDev();
+        String login = obj.getLogin();
+        String senha = obj.getSenha();
+
+        var usernamePassword = new UsernamePasswordAuthenticationToken(login, senha);
+        var auth = this.authenticationManager.authenticate(usernamePassword);
+        Usuario objeto = repository.findByLogin(login);
+
+        // onlineService.adicionarUsuario(login);
+        // messagingTemplate.convertAndSend("/topic/online", Map.of("login", login));
+        String token = jwtTokenAutenticacaoService.addAuthentication(response, auth.getName());
+
+        return Map.of(
+                "login", objeto.getLogin(),
+                "nome", objeto.getNome(),
+                "role", objeto.getRoles().iterator().next().getNomeRole(),
+                "token", token,
+                "isAreaDev", isAreaDev != null && isAreaDev ? true : false);
+
+    }
+
+    public Map efetuarCadastro(String login, String senha, String nome, HttpServletResponse response) throws Exception {
+
+        Map<String, String> erros = validarCadastro(login, senha, nome);
+        if (erros != null) {
+            return erros;
+        }
+
+        Usuario objeto = new Usuario();
+        objeto.setLogin(login);
+        objeto.setNome(nome);
+        objeto.setSenha(senha);
+
+        criarRoleDev(objeto);
+
+        Usuario usuarioSalvo = usuarioService.salvar(objeto);
+
+        return Map.of("usuario", usuarioSalvo, "message", "Usuário criado com sucesso!");
+
+    }
+
+    public void validarLogin(Usuario objeto, String idTenant) throws Exception {
+
+    }
+
+    public Map<String, String> validarCadastro(String login, String senha, String nome) {
+        if (login.isEmpty()) {
+            return Map.of("message", "O Login não pode ser vazio!");
+
+        }
+        if (nome.isEmpty()) {
+            return Map.of("message", "O Nome não pode ser vazio!");
+
+        }
+        if (senha.isEmpty()) {
+            return Map.of("message", "A Senha não pode ser vazio!");
+        }
+
+        if (repository.findByLogin(login) != null) {
+            return Map.of("message", "Usuário já existe!");
+        }
+        return null;
+    }
+
+    public void criarRoleDev(Usuario objeto) throws Exception {
+        Role roleUser = roleRepository.findByNomeRole(TipoRole.ROLE_DEV.name());
+        if (roleUser == null) {
+            roleUser = new Role();
+            roleUser.setNomeRole(TipoRole.ROLE_DEV.name());
+            roleRepository.save(roleUser);
+        }
+
+        if (objeto.getRoles() == null) {
+            objeto.setRoles(new ArrayList<>());
+        }
+
+        objeto.getRoles().clear();
+        objeto.getRoles().add(roleUser);
+
+    }
+
+    public Boolean logout(HttpServletRequest request, HttpServletResponse response) throws Exception {
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated()) {
+            new SecurityContextLogoutHandler().logout(request, response, auth);
+            onlineService.removerUsuario(auth.getName());
+            messagingTemplate.convertAndSend("/topic/online", Map.of("login", ""));
+            return true;
+        }
+
+        return false;
+    }
+
+}
