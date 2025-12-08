@@ -125,13 +125,13 @@ public class ConexaoController {
         Usuario user = usuarioRepository.findByLogin(login);
 
         if (user == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado."));
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado.") );
         }
 
         Conexao objeto = repository.findFirstByIdUsuario(user.getId());
 
         if (objeto == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{\"erro\": \"Conexao não encontrada!\"}");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body( Map.of("message", "Conexão não encontrada!"));
         }
 
         ConexaoDTO conexaoDTO = new ConexaoDTO();
