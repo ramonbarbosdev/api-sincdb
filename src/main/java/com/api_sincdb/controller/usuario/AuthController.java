@@ -87,6 +87,23 @@ public class AuthController {
 
     }
 
+     @PostMapping(value = "/obter-organizacao", produces = "application/json")
+    public ResponseEntity obterOrganizacao(@RequestBody AuthLoginDTO obj, HttpServletRequest request,
+            HttpServletResponse response) throws Exception {
+
+
+        try {
+
+            Map resposta = service.obterEmpresaVinculada(   obj );
+
+            return ResponseEntity.ok().body(resposta);
+        } catch (Exception e) {
+            service.logout(request, response);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
+        }
+
+    }
+
     @PostMapping(value = "/logout", produces = "application/json")
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) throws Exception {
 

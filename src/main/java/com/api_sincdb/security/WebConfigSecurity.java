@@ -1,6 +1,5 @@
 package com.api_sincdb.security;
 
-
 import java.util.Arrays;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -39,6 +38,7 @@ public class WebConfigSecurity {
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/logout").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/auth/obter-organizacao").permitAll()
                         // .requestMatchers(HttpMethod.POST, "/usuario/perfil/").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/status/").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -74,7 +74,7 @@ public class WebConfigSecurity {
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:4200"              ));
+                "http://localhost:4200"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setExposedHeaders(Arrays.asList("Content-Disposition")); // ⚠️ aqui!

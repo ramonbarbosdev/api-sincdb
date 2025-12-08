@@ -34,19 +34,11 @@ public class RoleService {
     @Transactional(rollbackFor = Exception.class)
     public Role salvar(Role objeto) throws Exception {
 
-  
-
         validarObjeto(objeto);
-        objeto = repository.save(objeto);
-
-
         objeto = repository.save(objeto);
 
         return objeto;
     }
-
-   
-
 
 
     public void validarObjeto(Role objeto) throws Exception {

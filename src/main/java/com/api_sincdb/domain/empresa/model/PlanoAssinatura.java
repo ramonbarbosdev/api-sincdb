@@ -27,7 +27,7 @@ import lombok.Setter;
 public class PlanoAssinatura {
 
     @Id
-    private String id_planoassinatura; 
+    private String id; 
 
     @NotBlank(message = "O nome é obrigatorio!")
     private String nm_planoassinatura;

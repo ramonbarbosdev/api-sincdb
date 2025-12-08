@@ -9,25 +9,25 @@ import java.util.function.Predicate;
 
 public class MestreDetalheUtils {
 
-    public static <T, ID> void removerItensGenerico(
-            Long idMaster,
+    public static <T, String> void removerItensGenerico(
+            String idMaster,
             List<T> itensAtualizados,
-            Function<Long, List<T>> buscarPersistidos,
-            Consumer<ID> deletar,
-            Function<T, ID> extrairId) {
+            Function<String, List<T>> buscarPersistidos,
+            Consumer<String> deletar,
+            Function<T, String> extrairId) {
 
         List<T> itensPersistidos = buscarPersistidos.apply(idMaster);
 
         for (T itemPersistido : itensPersistidos) {
             boolean aindaExiste = itensAtualizados.stream()
                     .anyMatch(i -> {
-                        ID idItem = extrairId.apply(i);
-                        ID idPersistido = extrairId.apply(itemPersistido);
+                        String idItem = extrairId.apply(i);
+                        String idPersistido = extrairId.apply(itemPersistido);
                         return idItem != null && idItem.equals(idPersistido);
                     });
 
             if (!aindaExiste) {
-                ID idItemPersistido = extrairId.apply(itemPersistido);
+                String idItemPersistido = extrairId.apply(itemPersistido);
                 if (idItemPersistido != null) {
                     deletar.accept(idItemPersistido);
                 }

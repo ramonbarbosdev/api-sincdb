@@ -70,6 +70,11 @@ public class Empresa {
 
     private LocalDateTime dt_cadastro = LocalDateTime.now();
 
-   
+    @JsonProperty("nm_planoassinatura")
+    public String getNm_planoassinatura() {
+        return planoAssinatura != null ? planoAssinatura.getNm_planoassinatura() : null;
+    }
+    
+    
 
 }

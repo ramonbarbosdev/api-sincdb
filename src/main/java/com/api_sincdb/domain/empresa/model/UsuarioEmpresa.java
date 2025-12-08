@@ -38,7 +38,7 @@ import lombok.Setter;
 public class UsuarioEmpresa {
 
     @Id
-    private String id_usuarioempresa;
+    private String id;
 
     private String id_usuario;
 

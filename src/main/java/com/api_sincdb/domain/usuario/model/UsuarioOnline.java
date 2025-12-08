@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
@@ -30,17 +31,23 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 import jakarta.persistence.JoinColumns;
 import jakarta.persistence.ForeignKey;
 
-@Entity
-@Table(name = "usuario_online")
+
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Document(collection = "usuario_online")
 public class UsuarioOnline {
 
 	@Id
-	@GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "seq_usuarioonline")
-	@SequenceGenerator(name = "seq_usuarioonline", sequenceName = "seq_usuarioonline", allocationSize = 1)
-	private Long id_usuarioonline;
+	private String id;
 
 	@NotBlank(message = "O login é obrigatorio!")
 	private String login;
@@ -49,45 +56,13 @@ public class UsuarioOnline {
 
 	private Boolean fl_ativo = true;
 
-
-	    // construtor padrão
-    public UsuarioOnline() {}
-
     public UsuarioOnline(String login) {
         this.login = login;
         this.fl_ativo = true;
         this.dt_ultimologin = LocalDateTime.now();
     }
 
-	public Long getId_usuarioonline() {
-		return id_usuarioonline;
-	}
+	
 
-	public void setId_usuarioonline(Long id_usuarioonline) {
-		this.id_usuarioonline = id_usuarioonline;
-	}
 
-	public String getLogin() {
-		return login;
-	}
-
-	public void setLogin(String login) {
-		this.login = login;
-	}
-
-	public LocalDateTime getDt_ultimologin() {
-		return dt_ultimologin;
-	}
-
-	public void setDt_ultimologin(LocalDateTime dt_ultimologin) {
-		this.dt_ultimologin = dt_ultimologin;
-	}
-
-	public Boolean getFl_ativo() {
-		return fl_ativo;
-	}
-
-	public void setFl_ativo(Boolean fl_ativo) {
-		this.fl_ativo = fl_ativo;
-	}
 }

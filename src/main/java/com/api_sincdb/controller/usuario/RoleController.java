@@ -42,12 +42,13 @@ public class RoleController extends BaseControllerMongo<Role, String> {
     @Autowired
     private RoleService service;
 
-    // @PostMapping(value = "/cadastrar", produces = "application/json")
-    // public ResponseEntity<?> criarNovaRole(@RequestBody Role objeto) {
-    //     roleRepository.save(objeto);
-    //     return ResponseEntity.status(HttpStatus.CREATED)
-    //             .body(Map.of("message", "Registro salvo com sucesso"));
-    // }
+    @PostMapping(value = "/cadastrar", produces = "application/json")
+    public ResponseEntity<?> criarNovaRole(@RequestBody Role objeto) throws Exception {
+        service.salvar(objeto);
+        return new ResponseEntity<>(Map.of("message", "Registro salvo com sucesso"), HttpStatus.CREATED);
+
+    }
+
 
     @PutMapping(value = "/atualizar-role/{id_usuario}/{id_role}", produces = "application/json")
     public ResponseEntity<?> atualizarRole(@PathVariable String id_usuario, @PathVariable String id_role) {

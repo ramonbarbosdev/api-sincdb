@@ -66,19 +66,16 @@ public class EmpresaService {
 
     public List<Empresa> buscarEmpresasPorUsuario(String id_usuario) {
 
-        // 1️⃣ Buscar os vínculos do usuário
         List<UsuarioEmpresa> vinculos = usuarioEmpresaRepository.findById_usuario(id_usuario);
 
         if (vinculos.isEmpty()) {
-            return List.of(); // Nenhuma empresa vinculada
+            return List.of();
         }
 
-        // 2️⃣ Extrair só os ids de empresas
         List<String> idsEmpresas = vinculos.stream()
                 .map(UsuarioEmpresa::getId_empresa)
                 .toList();
 
-        // 3️⃣ Buscar as empresas ativas vinculadas ao usuário
         return repository.findById_empresaInAndFl_ativoTrue(idsEmpresas);
     }
 

@@ -63,30 +63,70 @@ public class AuthService {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
-    public Map efetuarLogin(AuthLoginDTO obj, HttpServletResponse response, HttpServletRequest request)
+    public Map obterEmpresaVinculada(AuthLoginDTO obj)
             throws Exception {
 
-        Boolean isAreaDev = obj.getIsAreaDev();
         String login = obj.getLogin();
         String senha = obj.getSenha();
 
         var usernamePassword = new UsernamePasswordAuthenticationToken(login, senha);
+
         var auth = this.authenticationManager.authenticate(usernamePassword);
+
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new Exception("Usuário ou senha inválidos!");
+        }
+
         Usuario objeto = repository.findByLogin(login);
 
-        // onlineService.adicionarUsuario(login);
-        // messagingTemplate.convertAndSend("/topic/online", Map.of("login", login));
-        String token = jwtTokenAutenticacaoService.addAuthentication(response, auth.getName());
+        if (objeto == null) {
+            throw new Exception("Usuário ou senha inválidos!");
+        }
+
+        List<Empresa> list = empresaService.buscarListagemVinculoPorUsuario(objeto.getId());
+
+        String tempToken = jwtTokenAutenticacaoService.addAuthenticationSemTenant(login);
+
+        return Map.of(
+                "tenants", list,
+                "tempToken", tempToken,
+                "role", objeto.getRoles().iterator().next().getNomeRole());
+
+    }
+
+    public Map efetuarLogin(AuthLoginDTO obj, HttpServletResponse response, HttpServletRequest request)
+            throws Exception {
+
+        String authHeader = request.getHeader("Authorization");
+
+        if (authHeader == null || authHeader.isBlank()) {
+            throw new Exception("Token temporário ausente!");
+        }
+
+        String idUsuario = jwtTokenAutenticacaoService.extractLogin(authHeader);
+
+        Usuario objeto = usuarioService.obterPorId(idUsuario);
+
+        String idTenant = obj.getId_tenant();
+        Boolean isAreaDev = obj.getIsAreaDev();
+        String login = objeto.getLogin();
+        validarLogin(objeto, idTenant);
+
+        String finalToken = jwtTokenAutenticacaoService.addAuthentication(response, login, idTenant);
+
+        onlineService.adicionarUsuario(login);
+        messagingTemplate.convertAndSend("/topic/online", Map.of("login", login));
 
         return Map.of(
                 "login", objeto.getLogin(),
                 "nome", objeto.getNome(),
                 "role", objeto.getRoles().iterator().next().getNomeRole(),
-                "token", token,
+                "token", finalToken,
                 "isAreaDev", isAreaDev != null && isAreaDev ? true : false);
 
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public Map efetuarCadastro(AuthRegisterDTO obj, HttpServletResponse response) throws Exception {
 
         String login = obj.getLogin();
@@ -105,9 +145,11 @@ public class AuthService {
 
         criarRoleDev(objeto);
 
-         objeto = usuarioService.salvar(objeto);
+        objeto = usuarioService.salvar(objeto);
 
         criarEmpresaBase(objeto);
+
+        objeto = usuarioService.salvar(objeto);
 
         return Map.of("usuario", objeto, "message", "Usuário criado com sucesso!");
 
@@ -159,7 +201,9 @@ public class AuthService {
             usuarioEmpresa.setId_usuario(objeto.getId());
             usuarioEmpresa.setId_empresa(empresa.getId());
 
-            usuarioEmpresaRepository.save(usuarioEmpresa);
+            usuarioEmpresa = usuarioEmpresaRepository.save(usuarioEmpresa);
+
+            objeto.getItensUsuarioEmpresa().add(usuarioEmpresa);
         }
     }
 

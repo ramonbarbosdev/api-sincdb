@@ -44,8 +44,7 @@ public class JWTTokenAutenticacaoService {
         byte[] decodedKey = java.util.Base64.getDecoder().decode(cleanedKey);
         return new SecretKeySpec(decodedKey, "HmacSHA512");
     }
-
-    public String addAuthentication(HttpServletResponse response, String username) throws Exception {
+ public String addAuthentication(HttpServletResponse response, String username, String idTenant) throws Exception {
         SecretKeySpec secretKey = createSecretKey();
 
         Usuario usuario = ApplicationContextLoad.getApplicationContext()
@@ -55,6 +54,7 @@ public class JWTTokenAutenticacaoService {
         String jwt = Jwts.builder()
                 .setSubject(username)
                 .claim("id_usuario", usuario.getId())
+                .claim("id_tenant", idTenant)
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
                 .signWith(secretKey, SignatureAlgorithm.HS512)
                 .compact();
@@ -110,19 +110,35 @@ public class JWTTokenAutenticacaoService {
 
     }
 
-    public Long extractLogin(String token) {
+      public String extractTenantId(String token) {
         SecretKeySpec secretKey = createSecretKey();
 
         if (token.startsWith(TOKEN_PREFIX)) {
             token = token.replace(TOKEN_PREFIX, "").trim();
         }
 
-        Long response = Jwts.parserBuilder()
+        return Jwts.parserBuilder()
                 .setSigningKey(secretKey)
                 .build()
                 .parseClaimsJws(token)
                 .getBody()
-                .get("id_usuario", Long.class);
+                .get("id_tenant", String.class);
+    }
+
+
+    public String extractLogin(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        String response = Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("id_usuario", String.class);
 
         return response;
     }

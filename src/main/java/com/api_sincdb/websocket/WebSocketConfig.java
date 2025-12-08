@@ -25,7 +25,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/orcafacil-socket")
+        registry.addEndpoint("/sincdb-socket")
                 .addInterceptors(authHandshakeInterceptor)
                 // .setAllowedOrigins("http://localhost:4200",
                 // "https://agrotech.ramoncode.com.br",

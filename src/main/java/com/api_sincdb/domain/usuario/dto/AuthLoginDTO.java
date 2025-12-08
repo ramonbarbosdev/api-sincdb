@@ -11,7 +11,18 @@ public class AuthLoginDTO {
     @Schema(description = "Senha do usuário", example = "ramon", required = true)
     private String senha;
 
+    @Schema(description = "Inquilino", example = "Clinica", required = true)
+    private String id_tenant;
+
     private Boolean isAreaDev;
+
+
+       public String getId_tenant() {
+        return id_tenant;
+    }
+    public void setId_tenant(String id_tenant) {
+        this.id_tenant = id_tenant;
+    }
 
     // Getters e Setters
     public String getLogin() { return login; }

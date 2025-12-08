@@ -72,7 +72,6 @@ public class UsuarioController {
 	public ResponseEntity<UsuarioDTO> init(@PathVariable String id) {
 
 		Optional<Usuario> usuario = usuarioRepository.findById(id);
-
 		return new ResponseEntity<UsuarioDTO>(new UsuarioDTO(usuario.get()), HttpStatus.OK);
 	}
 
