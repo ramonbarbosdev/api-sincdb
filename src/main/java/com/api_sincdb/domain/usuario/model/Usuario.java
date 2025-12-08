@@ -12,6 +12,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import com.api_sincdb.domain.empresa.model.UsuarioEmpresa;
+import com.api_sincdb.domain.role.model.Role;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Document(collection = "usuarios")
@@ -29,6 +31,17 @@ public class Usuario implements UserDetails, Serializable {
 
     @DBRef(lazy = true) // lazy evita carregar tudo imediatamente, como FetchType.LAZY
     private List<Role> roles = new ArrayList<>();
+
+    @DBRef(lazy = true)
+    private List<UsuarioEmpresa> itensUsuarioEmpresa = new ArrayList<>();
+
+    public List<UsuarioEmpresa> getItensUsuarioEmpresa() {
+        return itensUsuarioEmpresa;
+    }
+
+    public void setItensUsuarioEmpresa(List<UsuarioEmpresa> itensUsuarioEmpresa) {
+        this.itensUsuarioEmpresa = itensUsuarioEmpresa;
+    }
 
     // Getters e Setters
 

@@ -27,9 +27,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.role.repository.RoleRepository;
 import com.api_sincdb.domain.usuario.dto.UsuarioDTO;
-import com.api_sincdb.domain.usuario.model.Role;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.domain.usuario.service.UsuarioService;

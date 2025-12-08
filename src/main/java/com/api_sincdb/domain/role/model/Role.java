@@ -1,4 +1,4 @@
-package com.api_sincdb.domain.usuario.model;
+package com.api_sincdb.domain.role.model;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;

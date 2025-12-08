@@ -15,9 +15,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.role.repository.RoleRepository;
 import com.api_sincdb.domain.sistema.service.ValidacaoService;
-import com.api_sincdb.domain.usuario.model.Role;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.enums.TipoRole;
@@ -125,13 +125,13 @@ public class UsuarioService {
 
     public void excluir(String id) throws Exception {
 
-        Usuario objeto = entityManager.getReference(Usuario.class, id);
-
+        Usuario objeto = repository.findById(id)
+        .orElseThrow(() -> new Exception("Usuário não encontrado!"));
+        
         if (objeto.getRoles().iterator().next().getNomeRole().equals(TipoRole.ROLE_DEV.name())) {
             throw new Exception("Voce não tem permissão para excluir um desenvolvedor!");
 
         }
-   
 
         repository.deleteById(id);
     }

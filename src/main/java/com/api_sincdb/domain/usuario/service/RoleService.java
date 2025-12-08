@@ -16,9 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.role.repository.RoleRepository;
-import com.api_sincdb.domain.usuario.model.Role;
-
 import com.api_sincdb.util.MestreDetalheUtils;
 import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.DatabindException;

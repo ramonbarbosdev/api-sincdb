@@ -20,9 +20,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.usuario.dto.AuthLoginDTO;
 import com.api_sincdb.domain.usuario.dto.AuthRegisterDTO;
-import com.api_sincdb.domain.usuario.model.Role;
 import com.api_sincdb.domain.usuario.model.Usuario;
 
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
@@ -77,12 +77,9 @@ public class AuthController {
     @PostMapping(value = "/register", produces = "application/json")
     public ResponseEntity register(@RequestBody AuthRegisterDTO obj) {
 
-        String login = obj.getLogin();
-        String nome = obj.getNome();
-        String senha = obj.getSenha();
-
+ 
         try {
-            Map cadastroResponse = service.efetuarCadastro(login, senha, nome, null);
+            Map cadastroResponse = service.efetuarCadastro(  obj, null);
             return ResponseEntity.status(HttpStatus.CREATED).body(cadastroResponse);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));

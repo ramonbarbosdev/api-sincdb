@@ -15,11 +15,17 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.api_sincdb.enums.TipoRole;
+import com.api_sincdb.domain.empresa.model.Empresa;
+import com.api_sincdb.domain.empresa.model.UsuarioEmpresa;
+import com.api_sincdb.domain.empresa.repository.UsuarioEmpresaRepository;
+import com.api_sincdb.domain.empresa.service.EmpresaService;
+import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.role.repository.RoleRepository;
 import com.api_sincdb.domain.usuario.dto.AuthLoginDTO;
-import com.api_sincdb.domain.usuario.model.Role;
+import com.api_sincdb.domain.usuario.dto.AuthRegisterDTO;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
@@ -38,6 +44,12 @@ public class AuthService {
 
     @Autowired
     private UsuarioService usuarioService;
+
+    @Autowired
+    private EmpresaService empresaService;
+
+    @Autowired
+    private UsuarioEmpresaRepository usuarioEmpresaRepository;
 
     @Autowired
     private UsuarioRepository repository;
@@ -75,7 +87,11 @@ public class AuthService {
 
     }
 
-    public Map efetuarCadastro(String login, String senha, String nome, HttpServletResponse response) throws Exception {
+    public Map efetuarCadastro(AuthRegisterDTO obj, HttpServletResponse response) throws Exception {
+
+        String login = obj.getLogin();
+        String nome = obj.getNome();
+        String senha = obj.getSenha();
 
         Map<String, String> erros = validarCadastro(login, senha, nome);
         if (erros != null) {
@@ -89,9 +105,11 @@ public class AuthService {
 
         criarRoleDev(objeto);
 
-        Usuario usuarioSalvo = usuarioService.salvar(objeto);
+         objeto = usuarioService.salvar(objeto);
 
-        return Map.of("usuario", usuarioSalvo, "message", "Usuário criado com sucesso!");
+        criarEmpresaBase(objeto);
+
+        return Map.of("usuario", objeto, "message", "Usuário criado com sucesso!");
 
     }
 
@@ -116,6 +134,33 @@ public class AuthService {
             return Map.of("message", "Usuário já existe!");
         }
         return null;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void criarEmpresaBase(Usuario objeto) throws Exception {
+
+        String nomeBase = "Desenvolvimento";
+        Empresa empresa = empresaService.verificarExistenciaPorNome(nomeBase);
+        if (empresa == null) {
+            empresa = new Empresa();
+            empresa.setNm_empresa(nomeBase);
+            empresa.setFl_ativo(true);
+            empresa.setCd_empresa(empresaService.sequencia());
+            empresa = empresaService.salvar(empresa);
+
+        }
+        // Verificar se já existe vínculo (evitar duplicação)
+        boolean jaTemVinculo = usuarioEmpresaRepository.existsById_usuarioAndId_empresa(
+                objeto.getId(),
+                empresa.getId());
+
+        if (!jaTemVinculo) {
+            UsuarioEmpresa usuarioEmpresa = new UsuarioEmpresa();
+            usuarioEmpresa.setId_usuario(objeto.getId());
+            usuarioEmpresa.setId_empresa(empresa.getId());
+
+            usuarioEmpresaRepository.save(usuarioEmpresa);
+        }
     }
 
     public void criarRoleDev(Usuario objeto) throws Exception {

@@ -1,6 +1,5 @@
 package com.api_sincdb.domain.sistema.service;
 
-
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -18,19 +17,16 @@ import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.enums.TipoRole;
 
-
-
 @Service
 public class ValidacaoService {
 
     @Autowired
     private UsuarioRepository usuarioRepository;
 
-    
-    public <T> String  gerarSequencia(Long sequencia) throws Exception {
-          Long ultima_sequencia = Optional
-                .ofNullable(sequencia).orElse(0L);
-
+    public <T> String gerarSequencia(String sequencia) throws Exception {
+        Long ultima_sequencia = Optional.ofNullable(sequencia)
+                .map(Long::valueOf)
+                .orElse(0L);
 
         Long sq_sequencia = ultima_sequencia + 1;
         String resposta = "%03d".formatted(sq_sequencia);
@@ -38,7 +34,7 @@ public class ValidacaoService {
         return resposta;
     }
 
-    public <T> String  validarCodigoExistenteProjeto(
+    public <T> String validarCodigoExistenteProjeto(
             Long idAtual,
             Optional<T> objetoExistente,
             Function<T, Long> getIdFunction,
@@ -62,14 +58,14 @@ public class ValidacaoService {
     }
 
     public <T> void validarCodigoExistente(
-            Long idAtual,
+            String idAtual,
             Optional<T> objetoExistente,
-            Function<T, Long> getIdFunction) throws Exception {
+            Function<T, String> getIdFunction) throws Exception {
 
         if (!objetoExistente.isPresent())
             return;
 
-        Long idExistente = getIdFunction.apply(objetoExistente.get());
+        String idExistente = getIdFunction.apply(objetoExistente.get());
 
         boolean idsDiferentes = (idExistente == null && idAtual != null)
                 || (idExistente != null && !idExistente.equals(idAtual));

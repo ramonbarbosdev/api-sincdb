@@ -3,7 +3,7 @@ package com.api_sincdb.domain.role.repository;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.stereotype.Repository;
 
-import com.api_sincdb.domain.usuario.model.Role;
+import com.api_sincdb.domain.role.model.Role;
 
 import jakarta.transaction.Transactional;
 
