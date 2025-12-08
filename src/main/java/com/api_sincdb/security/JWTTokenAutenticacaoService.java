@@ -8,6 +8,7 @@ import java.util.Date;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.ApplicationContextLoad;
@@ -87,19 +88,26 @@ public class JWTTokenAutenticacaoService {
         return TOKEN_PREFIX + jwt;
     }
 
-    public String extractTenantId(String token) {
-        SecretKeySpec secretKey = createSecretKey();
+    public String obterUsuarioLogado(String token) {
 
-        if (token.startsWith(TOKEN_PREFIX)) {
-            token = token.replace(TOKEN_PREFIX, "").trim();
+        if (token.isEmpty()) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            return (String) auth.getName();
+
+        } else {
+            SecretKeySpec secretKey = createSecretKey();
+            String jwt = token.replace(TOKEN_PREFIX, "").trim();
+
+            String user = Jwts.parserBuilder()
+                    .setSigningKey(secretKey)
+                    .build()
+                    .parseClaimsJws(jwt)
+                    .getBody()
+                    .getSubject();
+
+            return user;
         }
 
-        return Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody()
-                .get("id_tenant", String.class);
     }
 
     public Long extractLogin(String token) {
