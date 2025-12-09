@@ -117,7 +117,7 @@ public class EstruturaService {
 
             response.put("sucesso", true);
             response.put("tabelas_afetadas", detalhes);
-            response.put("message", listaErro);
+            response.put("errors", listaErro);
 
         } catch (SQLException e) {
             utilsSync.tratarErroSincronizacao(response, e);
