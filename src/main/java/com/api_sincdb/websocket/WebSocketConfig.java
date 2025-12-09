@@ -27,6 +27,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/sincdb-socket")
                 .addInterceptors(authHandshakeInterceptor)
+                  .setAllowedOriginPatterns("http://localhost:*")
                 // .setAllowedOrigins("http://localhost:4200",
                 // "https://agrotech.ramoncode.com.br",
                 // "https://157.245.238.100:*",
