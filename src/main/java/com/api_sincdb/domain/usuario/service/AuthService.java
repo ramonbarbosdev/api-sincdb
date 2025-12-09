@@ -60,7 +60,7 @@ public class AuthService {
     @Autowired
     private UsuarioOnlineService onlineService;
 
-    @Autowired
+    @Autowired(required = false)
     private SimpMessagingTemplate messagingTemplate;
 
     public Map obterEmpresaVinculada(AuthLoginDTO obj)

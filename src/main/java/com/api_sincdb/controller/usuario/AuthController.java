@@ -27,8 +27,6 @@ import com.api_sincdb.domain.usuario.model.Usuario;
 
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.domain.usuario.service.AuthService;
-import com.api_sincdb.domain.usuario.service.UsuarioService;
-import com.api_sincdb.enums.TipoRole;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;

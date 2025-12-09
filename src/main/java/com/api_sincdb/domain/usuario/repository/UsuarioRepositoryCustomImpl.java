@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 import com.api_sincdb.domain.usuario.model.Usuario;
 
 @Component
-public class UsuarioRepositoryImpl implements UsuarioRepositoryCustom {
+public class UsuarioRepositoryCustomImpl implements UsuarioRepositoryCustom {
 
     @Autowired
     private MongoTemplate mongoTemplate;

@@ -6,6 +6,7 @@ import java.security.SignatureException;
 import java.util.Date;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -26,6 +27,7 @@ import javax.crypto.SecretKey;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
 
 @Service
 public class JWTTokenAutenticacaoService {
@@ -44,7 +46,8 @@ public class JWTTokenAutenticacaoService {
         byte[] decodedKey = java.util.Base64.getDecoder().decode(cleanedKey);
         return new SecretKeySpec(decodedKey, "HmacSHA512");
     }
- public String addAuthentication(HttpServletResponse response, String username, String idTenant) throws Exception {
+
+    public String addAuthentication(HttpServletResponse response, String username, String idTenant) throws Exception {
         SecretKeySpec secretKey = createSecretKey();
 
         Usuario usuario = ApplicationContextLoad.getApplicationContext()
@@ -66,6 +69,7 @@ public class JWTTokenAutenticacaoService {
                 .getBean(UsuarioRepository.class)
                 .atualizarTokenUser(jwt, username);
 
+        inserirJwtCookie(jwt, response);
         liberacaoCors(response);
 
         return token;
@@ -110,7 +114,7 @@ public class JWTTokenAutenticacaoService {
 
     }
 
-      public String extractTenantId(String token) {
+    public String extractTenantId(String token) {
         SecretKeySpec secretKey = createSecretKey();
 
         if (token.startsWith(TOKEN_PREFIX)) {
@@ -124,7 +128,6 @@ public class JWTTokenAutenticacaoService {
                 .getBody()
                 .get("id_tenant", String.class);
     }
-
 
     public String extractLogin(String token) {
         SecretKeySpec secretKey = createSecretKey();
@@ -142,6 +145,49 @@ public class JWTTokenAutenticacaoService {
 
         return response;
     }
+
+       private String obterTokenCookie(HttpServletRequest request) {
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("access_token".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    public String obterTokenHeaderOuCookie(HttpServletRequest request) {
+        String cookieToken = obterTokenCookie(request);
+        if (cookieToken != null && !cookieToken.isEmpty()) {
+            return TOKEN_PREFIX + cookieToken;
+        }
+        return request.getHeader(HEADER_STRING);
+    }
+
+        public void inserirJwtCookie(String jwt, HttpServletResponse response) {
+        StringBuilder cookieValue = new StringBuilder();
+        cookieValue.append("access_token=").append(jwt)
+                .append("; Path=").append(CHAVE_COOKIE)
+                .append("; HttpOnly")
+                .append("; Secure")
+                .append("; SameSite=None")
+                .append("; Max-Age=3600"); // 1 hora
+
+        response.addHeader("Set-Cookie", cookieValue.toString());
+    }
+
+    public void removerJwtCookie(HttpServletResponse response) {
+        ResponseCookie cookie = ResponseCookie.from("access_token", "")
+                .maxAge(0)
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("None")
+                .path(CHAVE_COOKIE)
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
 
     public Authentication getAuthentication(HttpServletRequest request, HttpServletResponse response) {
         SecretKeySpec secretKey = createSecretKey();
