@@ -148,6 +148,11 @@ public class EstruturaService {
 
         processoService.iniciarProcesso(database);
 
+        // if(tabelasLocal.contains("system_failed_login"))
+        // {
+        //     System.out.println(tabelasLocal);
+        // }
+
         int totalTabelas = tabelasCloud.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
         processoService.enviarProgresso("Iniciando", 0, "Iniciando processam de " + totalTabelas + " tabelas", null);
