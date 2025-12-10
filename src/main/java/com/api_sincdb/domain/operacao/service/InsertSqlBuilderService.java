@@ -75,7 +75,6 @@ public class InsertSqlBuilderService {
                 return "'" + escape(conteudo) + "'";
             }
 
-            // Outros tipos de PGobject → trata como texto
             return "'" + escape(conteudo) + "'";
         }
 
@@ -85,14 +84,12 @@ public class InsertSqlBuilderService {
         if (value instanceof String s) {
 
             if (isJsonColumn(sqlType)) {
-                // coluna json/jsonb → tratar como JSON
                 if (looksLikeJson(s)) {
                     String normalized = normalizeJsonStrict(s);
                     return quoteJson(normalized);
                 }
             }
 
-            // coluna NÃO é JSON → string normal
             return "'" + escape(s) + "'";
         }
 
@@ -171,14 +168,13 @@ public class InsertSqlBuilderService {
         try {
             String fixed = raw.replace("\"\"", "\""); // corrige aspas duplas acidentais
             JsonNode node = mapper.readTree(fixed);
-            return mapper.writeValueAsString(node); // JSON válido
+            return mapper.writeValueAsString(node); 
         } catch (Exception e) {
             throw new SQLException("JSON inválido e não pôde ser normalizado: " + raw, e);
         }
     }
 
     private static String quoteJson(String json) {
-        // Dollar-quoting seguro
         String tag = "json" + System.nanoTime();
         return "$" + tag + "$" + json + "$" + tag + "$::jsonb";
     }
