@@ -39,45 +39,44 @@ public class PerfilController {
     @Autowired
     private AnexoService anexoService;
 
-    // @GetMapping(value = "/{login}", produces = "application/json")
-    // public ResponseEntity<?> obterPerfil(@PathVariable String login) throws Exception {
+    @GetMapping(value = "/{login}", produces = "application/json")
+    public ResponseEntity<?> obterPerfil(@PathVariable String login) throws Exception {
 
-    //     Usuario userTemporario = usuarioRepository.findUserByLogin(login);
+        Usuario userTemporario = usuarioRepository.findByLogin(login);
 
-    //     if (userTemporario == null) {
-    //         return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{\"message\": \"Usuário não encontrado.\"}");
-    //     }
+        if (userTemporario == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{\"message\": \"Usuário não encontrado.\"}");
+        }
 
-    //     String permissao = userTemporario.getRoles().iterator().next().getNomeRole();
+        String permissao = userTemporario.getRoles().iterator().next().getNomeRole();
 
-    //     PerfilDTO perfilDTO = new PerfilDTO();
-    //     perfilDTO.setId(userTemporario.getId());
-    //     perfilDTO.setLogin(userTemporario.getLogin());
-    //     perfilDTO.setNome(userTemporario.getNome());
-    //     // perfilDTO.setSenha(userTemporario.getSenha());
-    //     perfilDTO.setImg(userTemporario.getImg());
-    //     perfilDTO.setRole(permissao);
-    //     perfilDTO.setCargo("");
+        PerfilDTO perfilDTO = new PerfilDTO();
+        perfilDTO.setId(userTemporario.getId());
+        perfilDTO.setLogin(userTemporario.getLogin());
+        perfilDTO.setNome(userTemporario.getNome());
+        // perfilDTO.setSenha(userTemporario.getSenha());
+        perfilDTO.setRole(permissao);
+        perfilDTO.setCargo("");
 
-    //     return new ResponseEntity<>(perfilDTO, HttpStatus.OK);
-    // }
+        return new ResponseEntity<>(perfilDTO, HttpStatus.OK);
+    }
 
-    // @PutMapping(value = "/", produces = "application/json")
-    // public ResponseEntity<?> atualizarPerfil(@RequestBody PerfilDTO usuario) throws Exception {
+    @PutMapping(value = "/", produces = "application/json")
+    public ResponseEntity<?> atualizarPerfil(@RequestBody PerfilDTO usuario) throws Exception {
 
-    //     Usuario userTemporario = usuarioRepository.findUserByLogin(usuario.getLogin());
+        Usuario userTemporario = usuarioRepository.findByLogin(usuario.getLogin());
 
-    //     if (userTemporario == null) {
-    //         return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{\"message\": \"Usuário não encontrado.\"}");
-    //     }
+        if (userTemporario == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("{\"message\": \"Usuário não encontrado.\"}");
+        }
 
-    //     userTemporario.setNome(usuario.getNome());
-    //     service.inserirSenhaCriptografada(userTemporario, usuario.getSenha());
+        userTemporario.setNome(usuario.getNome());
+        service.inserirSenhaCriptografada(userTemporario, usuario.getSenha());
 
-    //     Usuario usuarioSalvo = usuarioRepository.save(userTemporario);
+        Usuario usuarioSalvo = usuarioRepository.save(userTemporario);
 
-    //     return new ResponseEntity<>(Map.of("message", "Atualizado com sucesso!"), HttpStatus.OK);
-    // }
+        return new ResponseEntity<>(Map.of("message", "Atualizado com sucesso!"), HttpStatus.OK);
+    }
 
     // @PostMapping("/upload-foto/{id}")
     // public ResponseEntity<?> uploadFotoPerfil(@PathVariable Long id, @RequestParam MultipartFile file) {

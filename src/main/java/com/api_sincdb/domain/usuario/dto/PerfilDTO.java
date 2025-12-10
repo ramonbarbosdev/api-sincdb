@@ -3,7 +3,7 @@ package com.api_sincdb.domain.usuario.dto;
 
 public class PerfilDTO {
 
-    private Long id;
+    private String id;
     private String login;
     private String nome;
     private String senha;
@@ -15,7 +15,7 @@ public class PerfilDTO {
     
     }
 
-    public PerfilDTO(Long id,String login, String nome, String img, String role, String cargo,String senha) {
+    public PerfilDTO(String id,String login, String nome, String img, String role, String cargo,String senha) {
         this.id = id;
         this.login = login;
         this.nome = nome;
@@ -73,11 +73,11 @@ public class PerfilDTO {
         this.senha = senha;
     }
 
-    public Long getId() {
+    public String getId() {
         return id;
     }
 
-    public void setId(Long id) {
+    public void setId(String id) {
         this.id = id;
     }
 }
