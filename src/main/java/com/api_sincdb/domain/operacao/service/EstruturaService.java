@@ -159,12 +159,13 @@ public class EstruturaService {
 
         int totalTabelas = tabelasCloud.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processam de " + totalTabelas + " tabelas", null);
+        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas", null);
 
-        logPublisher.enviarLog("Iniciando processam de " + totalTabelas + " tabelas");
+        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas");
 
         Set<String> verificarSchemasCriados = new HashSet<>();
 
+     
         // CRIAR SEQUENCIA
         String sequenciaQuery = databaseService.criarSequenciaQuery(conexaoCloud, conexaoLocal, esquema);
         if (sequenciaQuery != null)
@@ -204,6 +205,8 @@ public class EstruturaService {
 
         for (String itemTabela : tabelasCloud) {
 
+        
+
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
 
@@ -236,7 +239,7 @@ public class EstruturaService {
                 if (fkQuery != null)
                     chavesEstrangeiras.add(fkQuery);
             } else {
-                logPublisher.enviarLog("Verificando alteracao na tabela: " + itemTabela);
+                logPublisher.enviarLog("Verificando alteração na tabela: " + itemTabela);
 
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
                         conexaoLocal, itemTabela);

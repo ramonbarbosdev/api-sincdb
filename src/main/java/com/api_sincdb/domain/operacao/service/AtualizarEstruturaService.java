@@ -433,14 +433,18 @@ public class AtualizarEstruturaService {
             // 2. Para cada view dependente gerar DROP + CREATE
             for (String viewName : viewsDep) {
 
-                // DROP VIEW
-                dropViewsDependentes.add("DROP VIEW IF EXISTS " + viewName + ";");
-
+               
                 // Extrair schema e nome da view
                 String schemaView = utilsSync.extrairSchema(viewName);
                 String nomeView = utilsSync.extrairTabela(viewName);
 
-                // Obter definição oficial da view no cloud
+                if (!isView(conexaoCloud, schemaView, nomeView)) {
+                    continue; // pula objetos que não são VIEW
+                }
+
+                 // DROP VIEW
+                dropViewsDependentes.add("DROP VIEW IF EXISTS " + viewName + ";");
+
                 String defView = obterDefinicaoView(conexaoCloud, schemaView, nomeView);
 
                 // CREATE VIEW
@@ -449,4 +453,33 @@ public class AtualizarEstruturaService {
             }
         }
     }
+
+    public boolean isView(Connection conn, String schema, String viewName) throws SQLException {
+        // Ignore catálogos internos
+        if (schema.equalsIgnoreCase("pg_catalog") ||
+                schema.equalsIgnoreCase("information_schema") ||
+                schema.startsWith("pg_") ||
+                viewName.startsWith("pg_")) {
+            return false;
+        }
+
+        String sql = """
+                    SELECT COUNT(*)
+                    FROM information_schema.views
+                    WHERE table_schema = ?
+                      AND table_name = ?
+                """;
+
+        try (PreparedStatement pst = conn.prepareStatement(sql)) {
+            pst.setString(1, schema);
+            pst.setString(2, viewName);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next())
+                    return rs.getInt(1) > 0;
+            }
+        }
+        return false;
+    }
+
 }

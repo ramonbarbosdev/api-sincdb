@@ -476,9 +476,9 @@ public class DadosService {
         // Processamento
         int totalTabelas = tabelas.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processam de " + totalTabelas + " tabelas", null);
+        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.", null);
 
-        logPublisher.enviarLog("Iniciando processam de " + totalTabelas + " tabela");
+        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas.");
 
         for (String itemTabela : tabelas) {
             if (Thread.currentThread().isInterrupted())

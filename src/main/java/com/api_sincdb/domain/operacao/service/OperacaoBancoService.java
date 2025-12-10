@@ -38,6 +38,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.websocket.LogPublisher;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class OperacaoBancoService {
@@ -47,6 +49,9 @@ public class OperacaoBancoService {
 
     @Autowired
     private LogPublisher logPublisher;
+
+    @Autowired
+    private InsertSqlBuilderService insertSqlBuilderService;
 
     public List<String> registroDesconhecido(Connection connection, String tabela, Long id, String pkColumn) {
         DSLContext dsl = DSL.using(connection);
@@ -77,7 +82,7 @@ public class OperacaoBancoService {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    String insertSQL = construirInsertSQL(tabela, rs);
+                    String insertSQL = insertSqlBuilderService.construirInsertSQL(tabela, rs);
                     queryList.add(insertSQL);
                 } else {
                     throw new SQLException("Nenhum dado encontrado na tabela '" + tabela + "' com ID " + id);
@@ -209,7 +214,7 @@ public class OperacaoBancoService {
                             // Supondo que a primeira coluna seja a chave (id)
                             String id = rs.getString(1);
                             // Construir a instrução SQL
-                            String sql = construirInsertSQL(tabela, rs);
+                            String sql = insertSqlBuilderService.construirInsertSQL(tabela, rs);
                             // Armazenar a instrução SQL no Map
                             sqlCache.add(sql);
                         }
@@ -237,207 +242,27 @@ public class OperacaoBancoService {
         // Retornar o Map com todas as instruções SQL
         return sqlCache;
     }
-
-    // Método para construir a instrução SQL de INSERT
-    private String construirInsertSQL(String tabela, ResultSet rs) throws SQLException {
-        // if(!tabela.equals("item_estrutura_operacao")) return null;
-
-        StringBuilder sql = new StringBuilder("INSERT INTO ");
-        sql.append(tabela).append(" (");
-
-        ResultSetMetaData metaData = rs.getMetaData();
-        int columnCount = metaData.getColumnCount();
-
-        // Adicionar os nomes das colunas
-        for (int i = 1; i <= columnCount; i++) {
-            sql.append(metaData.getColumnName(i));
-            if (i < columnCount) {
-                sql.append(", ");
-            }
-        }
-
-        sql.append(") VALUES (");
-
-        // Adicionar os valores das colunas
-        for (int i = 1; i <= columnCount; i++) {
-            Object value = rs.getObject(i);
-            String columnTypeName = metaData.getColumnTypeName(i);
-
-            if (value == null) {
-                sql.append("NULL");
-            } else if (value instanceof String) {
-
-                sql.append("'").append(escapeApostrophe(value.toString())).append("'");
-            } else if (value instanceof java.util.Date) {
-
-                sql.append("'").append(new java.sql.Timestamp(((java.util.Date) value).getTime())).append("'");
-            } else if (value instanceof PGobject && "jsonb".equals(columnTypeName)) {
-                PGobject pg = (PGobject) value;
-                sql.append("'").append(escapeApostrophe(pg.getValue())).append("'::jsonb");
-            } else {
-                sql.append(value);
-            }
-
-            if (i < columnCount) {
-                sql.append(", ");
-            }
-        }
-
-        sql.append(");");
-
-        String sqlString = sql.length() > 0 ? sql.toString() : "";
-
-        return sqlString;
-    }
-
-    private String escapeApostrophe(String value) {
-        return value.replace("'", "''");
-    }
-
+  
     // Método para tratar exceções de lote
     private void handleBatchUpdateException(BatchUpdateException e, String tabela) {
-        System.err.println("Erro durante a execução do lote: " + e.getMessage());
+        logPublisher.enviarLog("Erro durante a execução do lote: " + e.getMessage());
 
         SQLException nextException = e.getNextException();
         while (nextException != null) {
             if (nextException.getMessage().contains("duplicate key value violates unique constraint")) {
-                System.err.println("Erro: Chave duplicada detectada. Registro já existe na tabela " + tabela + ".");
+                logPublisher.enviarLog("Erro: Chave duplicada detectada. Registro já existe na tabela " + tabela + ".");
+
                 throw new RuntimeException(
                         "Erro: Chave duplicada detectada. Registro já existe na tabela " + tabela + ".");
             } else {
+                logPublisher.enviarLog("Outro erro SQL: " + nextException.getMessage());
                 System.err.println("Outro erro SQL: " + nextException.getMessage());
             }
             nextException = nextException.getNextException();
         }
+        logPublisher.enviarLog("Falha ao executar batch");
+
         throw new RuntimeException("Falha ao executar batch", e);
-    }
-
-    public void sincronizacaoIncremental(Connection conexaoCloud, Connection conexaoLocal,
-            String tabela,
-            String pkColumn,
-            long maxLocalId,
-            Map<String, Object> response) throws SQLException {
-        final int BATCH_SIZE = 1000;
-
-        // String query = String.format("SELECT * FROM %s WHERE %s > ? ORDER BY %s",
-        // tabela, pkColumn, pkColumn);
-        String query = String.format("SELECT * FROM %s WHERE %s = ? ORDER BY %s",
-                tabela, pkColumn, pkColumn);
-
-        try (PreparedStatement cloudStmt = conexaoCloud.prepareStatement(query, ResultSet.TYPE_FORWARD_ONLY,
-                ResultSet.CONCUR_READ_ONLY)) {
-            cloudStmt.setFetchSize(1000);
-            cloudStmt.setLong(1, maxLocalId);
-
-            try (ResultSet rs = cloudStmt.executeQuery();
-                    PreparedStatement localInsert = criarPreparedInsert(conexaoLocal, tabela, rs.getMetaData())) {
-
-                conexaoLocal.setAutoCommit(false);
-                int batchCount = 0;
-
-                while (rs.next()) {
-                    preencherPreparedStatement(localInsert, rs);
-                    localInsert.addBatch();
-
-                    if (++batchCount % BATCH_SIZE == 0) {
-                        localInsert.executeBatch();
-                        conexaoLocal.commit();
-                    }
-                }
-
-                localInsert.executeBatch();
-                conexaoLocal.commit();
-                // response.put("message", "Sincronização incremental concluida.");
-
-            }
-        }
-    }
-
-    public PreparedStatement criarPreparedInsert(Connection conexao, String tabela, ResultSetMetaData meta)
-            throws SQLException {
-        StringBuilder sql = new StringBuilder("INSERT INTO ").append(tabela).append(" (");
-        StringBuilder values = new StringBuilder("VALUES (");
-
-        int columnCount = meta.getColumnCount();
-        for (int i = 1; i <= columnCount; i++) {
-            if (i > 1) {
-                sql.append(", ");
-                values.append(", ");
-            }
-            sql.append(meta.getColumnName(i));
-            values.append("?");
-        }
-
-        sql.append(") ").append(values).append(")");
-
-        return conexao.prepareStatement(sql.toString());
-    }
-
-    public void preencherPreparedStatement(PreparedStatement stmt, ResultSet rs) throws SQLException {
-        for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
-            stmt.setObject(i, rs.getObject(i));
-        }
-    }
-
-    public List<String> registroDivergente(Connection conexaoLocal, Connection conexaoCloud, String tabela, Long id,
-            String pkColumn) throws SQLException {
-        List<String> sqls = new ArrayList<>();
-
-        // 1. Pega dados do registro na cloud
-        String sqlSelect = String.format("SELECT * FROM %s WHERE %s = ?", tabela, pkColumn);
-        try (PreparedStatement ps = conexaoCloud.prepareStatement(sqlSelect)) {
-            ps.setLong(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    ResultSetMetaData meta = rs.getMetaData();
-                    int colCount = meta.getColumnCount();
-
-                    // 2. Monta UPDATE para base local
-                    StringBuilder sbUpdate = new StringBuilder();
-                    sbUpdate.append("UPDATE ").append(tabela).append(" SET ");
-
-                    List<String> setClauses = new ArrayList<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        String colName = meta.getColumnName(i);
-                        if (colName.equalsIgnoreCase(pkColumn)) {
-                            continue; // não atualiza PK
-                        }
-
-                        Object valor = rs.getObject(i);
-
-                        String valorFormatado = formatarValorSQL(valor, meta.getColumnTypeName(i));
-                        setClauses.add(colName + " = " + valorFormatado);
-                    }
-
-                    sbUpdate.append(String.join(", ", setClauses));
-                    sbUpdate.append(" WHERE ").append(pkColumn).append(" = ").append(id).append(";");
-
-                    sqls.add(sbUpdate.toString());
-                }
-            }
-        }
-
-        return sqls;
-    }
-
-    private String formatarValorSQL(Object valor, String tipoSQL) {
-        if (valor == null) {
-            return "NULL";
-        }
-        // Tratar strings/texto
-        if (tipoSQL.toLowerCase().contains("char") || tipoSQL.equalsIgnoreCase("text")) {
-            return "'" + valor.toString().replace("'", "''") + "'";
-        }
-        // Tratar datas
-        if (tipoSQL.toLowerCase().contains("date") || tipoSQL.toLowerCase().contains("timestamp")) {
-            return "'" + valor.toString() + "'";
-        }
-        // Booleano no Postgres
-        if (tipoSQL.equalsIgnoreCase("bool") || tipoSQL.equalsIgnoreCase("boolean")) {
-            return ((Boolean) valor) ? "true" : "false";
-        }
-        // Valores numéricos, por padrão
-        return valor.toString();
     }
 
 }
