@@ -47,6 +47,9 @@ public class DadosService {
     private DatabaseService databaseService;
 
     @Autowired
+    private AtualizarEstruturaService atualizarEstruturaService;
+
+    @Autowired
     private CicloService cicloService;
 
     @Autowired
@@ -339,7 +342,7 @@ public class DadosService {
 
     public void validarEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
             String tabela) throws SQLException {
-        if (tabela != null && databaseService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
+        if (tabela != null && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
             throw new SQLException("Estrutura da tabela " + tabela + " divergente entre cloud e local");
         }
     }
@@ -513,7 +516,6 @@ public class DadosService {
                         detalhes.add(infoDetalhe);
                         atualizacaoDados.addAll(query);
                     }
-                    
 
                 } else {
                     System.out.println("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");

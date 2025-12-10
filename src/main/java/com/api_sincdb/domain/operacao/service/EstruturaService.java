@@ -28,16 +28,18 @@ import org.springframework.stereotype.Service;
 
 import com.api_sincdb.config.ConexaoBanco;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
+import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.util.UtilsSync;
-
-
 
 @Service
 public class EstruturaService {
 
     @Autowired
     private DatabaseService databaseService;
+
+    @Autowired
+    private AtualizarEstruturaService atualizarEstruturaService;
 
     @Autowired
     private ProcessoService processoService;
@@ -145,13 +147,10 @@ public class EstruturaService {
         List<String> funcoes = Collections.synchronizedList(new ArrayList<>());
         List<String> extensoes = Collections.synchronizedList(new ArrayList<>());
         List<String> views = Collections.synchronizedList(new ArrayList<>());
+        List<String> dropViewsDependentes = Collections.synchronizedList(new ArrayList<>());
+        List<String> createViewsDependentes = Collections.synchronizedList(new ArrayList<>());
 
         processoService.iniciarProcesso(database);
-
-        // if(tabelasLocal.contains("system_failed_login"))
-        // {
-        //     System.out.println(tabelasLocal);
-        // }
 
         int totalTabelas = tabelasCloud.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
@@ -159,10 +158,12 @@ public class EstruturaService {
 
         Set<String> verificarSchemasCriados = new HashSet<>();
 
+        // CRIAR SEQUENCIA
         String sequenciaQuery = databaseService.criarSequenciaQuery(conexaoCloud, conexaoLocal, esquema);
         if (sequenciaQuery != null)
             sequencias.add(sequenciaQuery);
 
+        // CRIAR FUNCOES
         List<String> funcao = databaseService.criarFuncoesQuery(conexaoCloud, conexaoLocal);
         if (funcao.size() > 0) {
             EstruturaTabela infoEstruturaFuncao = new EstruturaTabela();
@@ -173,6 +174,7 @@ public class EstruturaService {
 
         }
 
+        // CRIAR EXTENSOES
         List<String> extencao = databaseService.gerarScriptsExtensoes(conexaoCloud, conexaoLocal);
         if (extencao.size() > 0) {
             EstruturaTabela infoEstruturaExtencao = new EstruturaTabela();
@@ -182,6 +184,7 @@ public class EstruturaService {
             detalhes.add(infoEstruturaExtencao);
         }
 
+        // CRIAR VIEWS
         List<String> scriptsViews = databaseService.gerarScriptsViews(conexaoCloud, conexaoLocal, esquema);
         if (!scriptsViews.isEmpty()) {
             views.addAll(scriptsViews);
@@ -193,7 +196,7 @@ public class EstruturaService {
         }
 
         for (String itemTabela : tabelasCloud) {
-            // Processamento
+
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
             int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
@@ -227,17 +230,28 @@ public class EstruturaService {
             } else {
                 System.out.println("Verificando alteracao na tabela: " + itemTabela);
 
-                String alterQuery = databaseService.compararEstruturaTabela(conexaoCloud, conexaoLocal, itemTabela);
+                ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
+                        conexaoLocal, itemTabela);
 
-                if (alterQuery != null) {
-                    alteracoes.add(alterQuery);
+                if (resultado.hasChanges()) {
+
+                    atualizarEstruturaService.gerarScriptsViewsDependentes(
+                            conexaoCloud,
+                            conexaoLocal,
+                            itemTabela,
+                            resultado,
+                            dropViewsDependentes,
+                            createViewsDependentes);
+
+                    alteracoes.addAll(resultado.getAlteracoes());
+
                     infoEstrutura.setTabela(itemTabela);
                     infoEstrutura.setAcao("Atualização");
-                    // infoEstrutura.setQuerys(alterQuery.length());
                     detalhes.add(infoEstrutura);
                 }
 
             }
+
         }
 
         processoService.enviarProgresso("Concluido", 100, "Processamento concluído com sucesso", null);
@@ -247,18 +261,19 @@ public class EstruturaService {
         queries.put("Sequências", sequencias);
         queries.put("Criação de Tabelas", criacoesTabela);
         queries.put("Chaves Estrangeiras", chavesEstrangeiras);
+        queries.put("DropViewsDependentes", dropViewsDependentes);
         queries.put("Alterações", alteracoes);
+        queries.put("CreateViewsDependentes", createViewsDependentes);
+        queries.put("Views", views);
         queries.put("Extenção", extencao);
         queries.put("Função", funcoes);
-        queries.put("Views", views);
 
         return queries;
     }
 
     public Set<String> obterTabelas(Connection conexao, String base, String nomeTabela)
             throws InterruptedException, ExecutionException, TimeoutException {
-        Set<String> tabelas = databaseService.obterTabelaMetaData(base, conexao); // chamado diretamente
-
+        Set<String> tabelas = databaseService.obterTabelaMetaData(base, conexao);
         if (nomeTabela != null && !nomeTabela.isBlank()) {
             return tabelas.stream()
                     .filter(t -> t.contains(nomeTabela))
@@ -270,7 +285,8 @@ public class EstruturaService {
 
     public void validarEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
             String tabela) throws SQLException {
-        if (tabela != null && databaseService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
+        if (tabela != null
+                && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
             throw new SQLException("Estrutura da tabela " + tabela + " divergente entre cloud e local");
         }
     }
