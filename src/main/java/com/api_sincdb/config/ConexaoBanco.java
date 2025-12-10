@@ -55,8 +55,10 @@ public class ConexaoBanco {
             dotenv = Dotenv.configure()
                     // .directory("src/main/resources/.env")
                     .directory("./.env")
+                    .ignoreIfMissing() // não derruba o backend
+                    .ignoreIfMalformed()
                     .load();
-
+                    
         } catch (Exception e) {
             throw new ExceptionInInitializerError("Erro ao carregar o arquivo .env: " + e.getMessage());
         }
@@ -211,7 +213,6 @@ public class ConexaoBanco {
                         "A senha do banco de dados " + tipo + " não pode ser nulo ou vazio. Verifique as Conexões!");
         }
 
-     
         String chave = database + "_" + tipo.name();
 
         HikariDataSource dataSource = dataSourceMap.get(chave);
