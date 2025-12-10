@@ -31,6 +31,7 @@ import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.util.UtilsSync;
+import com.api_sincdb.websocket.LogPublisher;
 
 @Service
 public class EstruturaService {
@@ -58,6 +59,9 @@ public class EstruturaService {
 
     @Autowired
     private CriacaoTabelaService criacaoTabelaService;
+
+    @Autowired
+    private LogPublisher logPublisher;
 
     public Map<String, Object> verificarEstrutura(String token, String database, String esquema, String nomeTabela) {
 
@@ -107,6 +111,7 @@ public class EstruturaService {
             if (querys == null) {
                 response.put("sucesso", false);
                 response.put("message", "Nenhuma verificação foi feita previamente.");
+                logPublisher.enviarLog("Nenhuma verificação foi feita previamente.");
                 return response;
             }
 
@@ -156,6 +161,8 @@ public class EstruturaService {
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
         processoService.enviarProgresso("Iniciando", 0, "Iniciando processam de " + totalTabelas + " tabelas", null);
 
+        logPublisher.enviarLog("Iniciando processam de " + totalTabelas + " tabelas");
+
         Set<String> verificarSchemasCriados = new HashSet<>();
 
         // CRIAR SEQUENCIA
@@ -199,13 +206,14 @@ public class EstruturaService {
 
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
+
             int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
             processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + itemTabela, itemTabela);
 
             EstruturaTabela infoEstrutura = new EstruturaTabela();
 
             if (!tabelasLocal.contains(itemTabela)) {
-                System.out.println("Criando estrutura da tabela: " + itemTabela);
+                logPublisher.enviarLog("Criando estrutura da tabela: " + itemTabela);
 
                 String schema = utilsSync.extrairSchema(itemTabela);
                 if (schema != null && !verificarSchemasCriados.contains(schema)) {
@@ -228,7 +236,7 @@ public class EstruturaService {
                 if (fkQuery != null)
                     chavesEstrangeiras.add(fkQuery);
             } else {
-                System.out.println("Verificando alteracao na tabela: " + itemTabela);
+                logPublisher.enviarLog("Verificando alteracao na tabela: " + itemTabela);
 
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
                         conexaoLocal, itemTabela);
@@ -255,6 +263,7 @@ public class EstruturaService {
         }
 
         processoService.enviarProgresso("Concluido", 100, "Processamento concluído com sucesso", null);
+        logPublisher.enviarLog("Verificação concluída com sucesso");
 
         HashMap<String, List<String>> queries = new LinkedHashMap<>();
         queries.put("Schemas", criacaoSchema);

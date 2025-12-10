@@ -37,11 +37,16 @@ import org.jooq.util.postgres.PGobject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.api_sincdb.websocket.LogPublisher;
+
 @Service
 public class OperacaoBancoService {
 
     @Autowired
     private ProcessoService processoService;
+
+    @Autowired
+    private LogPublisher logPublisher;
 
     public List<String> registroDesconhecido(Connection connection, String tabela, Long id, String pkColumn) {
         DSLContext dsl = DSL.using(connection);
@@ -101,20 +106,24 @@ public class OperacaoBancoService {
 
             }
 
-            processoService.enviarProgresso("Concluido", 100, "Processamento concluído com sucesso", null);
+            processoService.enviarProgresso("Concluido", 100, "Sincronização concluída com sucesso", null);
+            logPublisher.enviarLog("Sincronização concluída com sucesso");
 
         } catch (SQLException e) {
-            System.err.println("Falha na transação geral: " + e.getMessage());
+            logPublisher.enviarLog("Falha na transação geral: " + e.getMessage());
+
             try {
                 conexao.rollback();
             } catch (SQLException ex) {
-                System.err.println("Erro ao tentar rollback: " + ex.getMessage());
+                logPublisher.enviarLog("Erro ao tentar rollback: " + ex.getMessage());
+
             }
         } finally {
             try {
                 conexao.setAutoCommit(true);
             } catch (SQLException e) {
-                System.err.println("Erro ao reativar autoCommit: " + e.getMessage());
+                logPublisher.enviarLog("Erro ao reativar autoCommit: " + e.getMessage());
+
             }
         }
     }
@@ -125,7 +134,7 @@ public class OperacaoBancoService {
         if (queries == null || queries.isEmpty())
             return;
 
-        System.out.println("\n=== Executando grupo: " + tipo + " ===");
+        logPublisher.enviarLog("\n=== Executando grupo: " + tipo + " ===");
 
         for (String query : queries) {
             String tabela = extrairNomeTabelaDaQuery(query);
@@ -133,6 +142,7 @@ public class OperacaoBancoService {
             int progressoAtual = (int) ((queriesExecutadas.incrementAndGet() / (double) totalQueries) * 100);
             processoService.enviarProgresso("Processando", progressoAtual, "Processando " + tipo + ": " + tabela,
                     tabela);
+            logPublisher.enviarLog("Processando " + tipo + ": " + tabela);
 
             try {
                 try (java.sql.Statement stmt = conexao.createStatement()) {
@@ -144,6 +154,7 @@ public class OperacaoBancoService {
                 criarDetalhe.put("acao", tipo);
                 criarDetalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
                 detalhes.add(criarDetalhe);
+                logPublisher.enviarLog(e.getMessage() + " | SQLState: " + e.getSQLState());
 
                 throw e;
             }

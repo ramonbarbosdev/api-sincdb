@@ -38,6 +38,7 @@ import com.api_sincdb.config.ConexaoBanco;
 import com.api_sincdb.domain.operacao.model.TabelaDetalhe;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.util.UtilsSync;
+import com.api_sincdb.websocket.LogPublisher;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
 
@@ -66,6 +67,9 @@ public class DadosService {
 
     @Autowired
     private ConexaoBanco conexaoBanco;
+
+    @Autowired
+    private LogPublisher logPublisher;
 
     public Map<String, Object> verificarDados(String token, String database, String tabela) {
         Map<String, Object> response = new HashMap<String, Object>();
@@ -114,6 +118,8 @@ public class DadosService {
             if (querys == null) {
                 response.put("sucesso", false);
                 response.put("errors", "Nenhuma verificação foi feita previamente.");
+                logPublisher.enviarLog("Nenhuma verificação foi feita previamente.");
+
                 return response;
             }
 
@@ -342,7 +348,8 @@ public class DadosService {
 
     public void validarEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
             String tabela) throws SQLException {
-        if (tabela != null && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
+        if (tabela != null
+                && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
             throw new SQLException("Estrutura da tabela " + tabela + " divergente entre cloud e local");
         }
     }
@@ -471,6 +478,8 @@ public class DadosService {
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
         processoService.enviarProgresso("Iniciando", 0, "Iniciando processam de " + totalTabelas + " tabelas", null);
 
+        logPublisher.enviarLog("Iniciando processam de " + totalTabelas + " tabela");
+
         for (String itemTabela : tabelas) {
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
@@ -484,7 +493,7 @@ public class DadosService {
                 TabelaDetalhe infoDetalhe = new TabelaDetalhe();
 
                 if ((Boolean) parametros.get("novo")) {
-                    System.out.println("Criacao da script da '" + itemTabela + "'.");
+                    logPublisher.enviarLog("Criacao da script da '" + itemTabela + "'.");
 
                     List<String> query = operacaoBancoService.cargaInicialCompleta(conexaoCloud, conexaoLocal,
                             itemTabela);
@@ -499,7 +508,8 @@ public class DadosService {
 
                 } else if ((Boolean) parametros.get("existente")) {
 
-                    System.out.println("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
+                    logPublisher.enviarLog("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
+
                     String pkColumn = (String) parametros.get("pkColumn");
                     // @SuppressWarnings("unchecked")
                     // List<String> colunasParaHash = (List<String>)
@@ -518,7 +528,8 @@ public class DadosService {
                     }
 
                 } else {
-                    System.out.println("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");
+                    logPublisher.enviarLog("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");
+
                 }
 
                 String querySeq = atualizarSequencias(conexaoLocal, itemTabela);
@@ -535,7 +546,8 @@ public class DadosService {
         }
 
         // Processamento
-        processoService.enviarProgresso("Concluido", 100, "Processamento concluído com sucesso", null);
+        processoService.enviarProgresso("Concluido", 100, "Verificação concluída com sucesso", null);
+        logPublisher.enviarLog("Verificação concluída com sucesso");
 
         HashMap<String, List<String>> queries = new LinkedHashMap<>();
         queries.put("Criacao", criacaoDados);

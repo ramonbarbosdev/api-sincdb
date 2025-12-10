@@ -47,7 +47,8 @@ public class AtualizarEstruturaService {
     // ---------------------------------------------------------------------------------------------
     // BUSCA VIEWS DEPENDENTES (usado no processarTabelas)
     // ---------------------------------------------------------------------------------------------
-    public List<String> buscarViewsDependentes(Connection conexao, String schemaTabela, String nomeTabela, String nomeColuna)
+    public List<String> buscarViewsDependentes(Connection conexao, String schemaTabela, String nomeTabela,
+            String nomeColuna)
             throws SQLException {
 
         List<String> views = new ArrayList<>();
@@ -220,27 +221,46 @@ public class AtualizarEstruturaService {
     }
 
     // ---------------------------------------------------------------------------------------------
-    private void compararTipoColuna(ResultadoComparacao resultado,
+    private void compararTipoColuna(
+            ResultadoComparacao resultado,
             String nomeTabela,
             String nomeColuna,
             Coluna cloud,
             Coluna local) {
 
-        if (!cloud.getTipo().equalsIgnoreCase(local.getTipo())) {
+        String tipoCloud = cloud.getTipo().toLowerCase();
+        String tipoLocal = local.getTipo().toLowerCase();
+
+        // Se tiver tamanho: varchar(50), numeric(10,2)
+        if (tipoCloud.contains("(")) {
+
+            if (!tipoCloud.equals(tipoLocal)) {
+                // Tipos com tamanhos diferentes → ALTER TABLE
+                resultado.getColunasAlteradas().add(nomeColuna);
+
+                resultado.getAlteracoes().add(
+                        String.format("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
+                                nomeTabela, nomeColuna, tipoCloud));
+            }
+
+            return;
+        }
+
+        // Tipos sem tamanho
+        if (!tipoCloud.equals(tipoLocal)) {
 
             String usingClause = "";
 
-            if ((cloud.getTipo().equalsIgnoreCase("date") ||
-                    cloud.getTipo().startsWith("timestamp"))
-                    && local.getTipo().toLowerCase().contains("varchar")) {
-
-                usingClause = " USING " + nomeColuna + "::" + cloud.getTipo();
+            if ((tipoCloud.equals("date") || tipoCloud.startsWith("timestamp"))
+                    && tipoLocal.contains("varchar")) {
+                usingClause = " USING " + nomeColuna + "::" + tipoCloud;
             }
 
             resultado.getColunasAlteradas().add(nomeColuna);
-            resultado.getAlteracoes()
-                    .add(String.format("ALTER TABLE %s ALTER COLUMN %s TYPE %s%s;",
-                            nomeTabela, nomeColuna, cloud.getTipo(), usingClause));
+
+            resultado.getAlteracoes().add(
+                    String.format("ALTER TABLE %s ALTER COLUMN %s TYPE %s%s;",
+                            nomeTabela, nomeColuna, tipoCloud, usingClause));
         }
     }
 

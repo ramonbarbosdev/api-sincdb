@@ -15,13 +15,13 @@ import org.springframework.web.bind.annotation.RestController;
 import com.api_sincdb.domain.operacao.service.DadosService;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
 import com.api_sincdb.util.ProcessoManager;
+import com.api_sincdb.websocket.LogPublisher;
 
 import jakarta.servlet.http.HttpServletRequest;
 
-@RestController 
+@RestController
 @RequestMapping(value = "/dados")
-public class DadosController
-{
+public class DadosController {
 
 	@Autowired
 	private DadosService dadosService;
@@ -29,22 +29,23 @@ public class DadosController
 	@Autowired
 	private ProcessoManager processoManager;
 
-	    @Autowired
-    private JWTTokenAutenticacaoService jwtTokenAutenticacaoService;
+	@Autowired
+	private JWTTokenAutenticacaoService jwtTokenAutenticacaoService;
 
+	@Autowired
+	private LogPublisher logPublisher;
 
 	@GetMapping(value = "/verificar/{base}/{esquema}", produces = "application/json")
-	public ResponseEntity<?> verificarDados (@PathVariable (value = "base") String base, @PathVariable (value = "esquema") String esquema,  HttpServletRequest request ) throws InterruptedException 
-	{
+	public ResponseEntity<?> verificarDados(@PathVariable(value = "base") String base,
+			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) throws InterruptedException {
 
 		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
-		processoManager.iniciarProcesso(() ->
-		{
-			Map<String, Object>  resultado = dadosService.verificarDados(token, base,  null);
+		processoManager.iniciarProcesso(() -> {
+			Map<String, Object> resultado = dadosService.verificarDados(token, base, null);
 			resultadoRef.set(resultado);
 		});
 
@@ -56,27 +57,28 @@ public class DadosController
 				break;
 			}
 		}
-		
+
 		Map<String, Object> resultado = resultadoRef.get();
 
-		if (Boolean.TRUE.equals(resultado.get("sucesso"))) return new ResponseEntity<>(resultado, HttpStatus.OK);
-				
+		if (Boolean.TRUE.equals(resultado.get("sucesso")))
+			return new ResponseEntity<>(resultado, HttpStatus.OK);
+
 		return new ResponseEntity<>(resultado, HttpStatus.NOT_FOUND);
-		
+
 	}
-	 
+
 	@GetMapping(value = "/verificar/{base}/{esquema}/{tabela}", produces = "application/json")
-	public ResponseEntity<?> verificarDadosTabela (@PathVariable (value = "base") String base, @PathVariable (value = "esquema") String esquema,  @PathVariable (value = "tabela") String tabela,  HttpServletRequest request ) throws InterruptedException  
-	{
+	public ResponseEntity<?> verificarDadosTabela(@PathVariable(value = "base") String base,
+			@PathVariable(value = "esquema") String esquema, @PathVariable(value = "tabela") String tabela,
+			HttpServletRequest request) throws InterruptedException {
 
 		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
-		processoManager.iniciarProcesso(() ->
-		{
-			Map<String, Object>  resultado = dadosService.verificarDados(token, base,  tabela);
+		processoManager.iniciarProcesso(() -> {
+			Map<String, Object> resultado = dadosService.verificarDados(token, base, tabela);
 			resultadoRef.set(resultado);
 		});
 
@@ -88,42 +90,36 @@ public class DadosController
 				break;
 			}
 		}
-		
+
 		Map<String, Object> resultado = resultadoRef.get();
 
-		if (Boolean.TRUE.equals(resultado.get("sucesso"))) return new ResponseEntity<>(resultado, HttpStatus.OK);
-				
+		if (Boolean.TRUE.equals(resultado.get("sucesso")))
+			return new ResponseEntity<>(resultado, HttpStatus.OK);
+
 		return new ResponseEntity<>(resultado, HttpStatus.NOT_FOUND);
 	}
 
 	@GetMapping(value = "/cancelar", produces = "application/json")
-    public ResponseEntity<Void> cancelar()
-	{
-        processoManager.cancelarProcesso();
-        return ResponseEntity.ok().build();
-    }
-	
- 
-    @GetMapping(value = "/{base}", produces = "application/json")
-	public ResponseEntity<?> sincronizacao ( @PathVariable (value = "base") String base,  HttpServletRequest request ) 
-	{
+	public ResponseEntity<Void> cancelar() {
+		logPublisher.enviarLog("Processo Cancelado.");
+		processoManager.cancelarProcesso();
+		return ResponseEntity.ok().build();
+	}
+
+	@GetMapping(value = "/{base}", produces = "application/json")
+	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base, HttpServletRequest request) {
 
 		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
-		
-		Map<String, Object> resultado = dadosService.sincronizarDados(token,base,  null, false);
+		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, null, false);
 
-		if ((Boolean) resultado.get("sucesso"))
-		{
+		if ((Boolean) resultado.get("sucesso")) {
 			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
-											
-		}
-		else
-		{
+
+		} else {
 			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.NOT_FOUND);
 		}
 	}
-	
 
 }
