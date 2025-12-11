@@ -134,6 +134,11 @@ public class UsuarioService {
 
             objeto.setItensUsuarioEmpresa(itens);
         }
+
+        if(objeto.getItensUsuarioEmpresa() == null )
+        {
+            throw new Exception("É necessário existir um vínculo com uma empresa.");
+        }
     }
 
     public void validarItemUsuarioEmpresa(UsuarioEmpresa item,
