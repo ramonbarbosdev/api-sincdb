@@ -23,6 +23,6 @@ public class UsuarioOnlineController {
 
     @GetMapping("/")
     public ResponseEntity<?> listarUsuariosOnline() {
-        return ResponseEntity.ok(usuarioOnlineService.obterInformacoesUsuario());
+        return ResponseEntity.ok(usuarioOnlineService.listarUsuariosOnline());
     }
 }

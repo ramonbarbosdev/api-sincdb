@@ -22,12 +22,8 @@ public interface UsuarioOnlineRepository extends MongoRepository<UsuarioOnline, 
                         "{ $match: { login: { $ne: ?0 } } }",
                         "{ $lookup: { from: 'usuario', localField: 'login', foreignField: 'login', as: 'usuarioInfo' } }",
                         "{ $unwind: '$usuarioInfo' }",
-                        "{ $project: { " +
-                                        "login: 1, " +
-                                        "fl_ativo: 1, " +
-                                        "dt_ultimologin: 1, " +
-                                        "nome: '$usuarioInfo.nome' " +
-                                        "} }"
+                        "{ $project: { login: 1, fl_ativo: 1, dt_ultimologin: 1, nome: '$usuarioInfo.nome' } }"
         })
         List<UsuarioOnlineDetalhadoProjection> obterInformacoesUsuario(String login);
+
 }

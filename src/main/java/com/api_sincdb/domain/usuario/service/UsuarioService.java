@@ -136,7 +136,7 @@ public class UsuarioService {
         }
     }
 
-     public void validarItemUsuarioEmpresa(UsuarioEmpresa item,
+    public void validarItemUsuarioEmpresa(UsuarioEmpresa item,
             List<UsuarioEmpresa> itens, Usuario objeto) throws Exception {
 
         if (item.getId_empresa() == null) {
@@ -188,8 +188,14 @@ public class UsuarioService {
         Usuario objeto = repository.findById(id)
                 .orElseThrow(() -> new Exception("Usuário não encontrado!"));
 
-        if (objeto.getRoles().iterator().next().getNomeRole().equals(TipoRole.ROLE_DEV.name())) {
-            throw new Exception("Voce não tem permissão para excluir um desenvolvedor!");
+        if (objeto.getRoles() != null && !objeto.getRoles().isEmpty()) {
+
+            boolean isDev = objeto.getRoles().stream()
+                    .anyMatch(r -> r.getNomeRole().equals(TipoRole.ROLE_DEV.name()));
+
+            if (isDev) {
+                throw new Exception("Você não tem permissão para excluir um desenvolvedor!");
+            }
 
         }
 
