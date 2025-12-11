@@ -15,7 +15,7 @@ import java.util.Date;
 @Service
 public class InsertSqlBuilderService {
 
-   private static final ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     public static String construirInsertSQL(String tabela, ResultSet rs) throws SQLException {
         ResultSetMetaData meta = rs.getMetaData();
@@ -153,25 +153,58 @@ public class InsertSqlBuilderService {
     // JSON — apenas quando a coluna for json/jsonb
     // ================================================================
     private static boolean isJsonColumn(String sqlType) {
-        if (sqlType == null) return false;
+        if (sqlType == null)
+            return false;
         return sqlType.equalsIgnoreCase("json") || sqlType.equalsIgnoreCase("jsonb");
     }
 
     private static boolean looksLikeJson(String s) {
-        if (s == null) return false;
+        if (s == null)
+            return false;
         s = s.trim();
         return (s.startsWith("{") && s.endsWith("}")) ||
-               (s.startsWith("[") && s.endsWith("]"));
+                (s.startsWith("[") && s.endsWith("]"));
     }
 
     private static String normalizeJsonStrict(String raw) throws SQLException {
+
+        // primeira tentativa: JSON está válida -> retorna como está
         try {
-            String fixed = raw.replace("\"\"", "\""); // corrige aspas duplas acidentais
-            JsonNode node = mapper.readTree(fixed);
-            return mapper.writeValueAsString(node); 
-        } catch (Exception e) {
-            throw new SQLException("JSON inválido e não pôde ser normalizado: " + raw, e);
+            mapper.readTree(raw);
+            return raw;
+        } catch (Exception ignored) {
         }
+
+        // tntar corrigir aspas duplas acidentais "" -> " somente se isso resolver
+        String fixed1 = raw.replaceAll("(?<!\\\\)\"\"", "\"");
+        try {
+            mapper.readTree(fixed1);
+            return mapper.writeValueAsString(mapper.readTree(fixed1));
+        } catch (Exception ignored) {
+        }
+
+        // tentar remover escapes quebrados
+        String fixed2 = raw.replace("\\\"", "\"");
+        try {
+            mapper.readTree(fixed2);
+            return mapper.writeValueAsString(mapper.readTree(fixed2));
+        } catch (Exception ignored) {
+        }
+
+        // ultima tentativa: restaurar aspas corretas ao redor de chaves/arrays
+        String fixed3 = raw.trim();
+        if (fixed3.startsWith("\"") && fixed3.endsWith("\"")) {
+            fixed3 = fixed3.substring(1, fixed3.length() - 1);
+        }
+
+        try {
+            mapper.readTree(fixed3);
+            return mapper.writeValueAsString(mapper.readTree(fixed3));
+        } catch (Exception ignored) {
+        }
+
+        // nada funcionou -> JSON definitivamente inválido
+        throw new SQLException("JSON inválido e não pôde ser normalizado: " + raw);
     }
 
     private static String quoteJson(String json) {
@@ -183,7 +216,8 @@ public class InsertSqlBuilderService {
     // UTILITÁRIOS
     // ================================================================
     private static String escape(String s) {
-        if (s == null) return null;
+        if (s == null)
+            return null;
         return s.replace("\\", "\\\\")
                 .replace("'", "''");
     }

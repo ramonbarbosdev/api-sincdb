@@ -42,6 +42,9 @@ import com.api_sincdb.websocket.LogPublisher;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
 
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.table;
+
 @Service
 public class DadosService {
     @Autowired
@@ -476,7 +479,8 @@ public class DadosService {
         // Processamento
         int totalTabelas = tabelas.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.", null);
+        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.",
+                null);
 
         logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas.");
 
@@ -511,9 +515,6 @@ public class DadosService {
                     logPublisher.enviarLog("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
 
                     String pkColumn = (String) parametros.get("pkColumn");
-                    // @SuppressWarnings("unchecked")
-                    // List<String> colunasParaHash = (List<String>)
-                    // parametros.get("colunasParaHash");
 
                     List<String> query = verificarConsistenciaRegistros(conexaoLocal, conexaoCloud, itemTabela,
                             pkColumn);
@@ -582,55 +583,37 @@ public class DadosService {
 
     public List<String> verificarConsistenciaRegistros(Connection conexaoLocal, Connection conexaoCloud, String tabela,
             String pkColumn) throws SQLException {
-        Map<String, List<String>> resultadoQuery = new LinkedHashMap<>();
-        resultadoQuery.put("delete", new ArrayList<>());
-        resultadoQuery.put("insert", new ArrayList<>());
 
-        List<String> sqlCache = new ArrayList<>();
+        DSLContext local = DSL.using(conexaoLocal, SQLDialect.POSTGRES);
+        DSLContext cloud = DSL.using(conexaoCloud, SQLDialect.POSTGRES);
 
-        DSLContext createLocal = DSL.using(conexaoLocal, SQLDialect.POSTGRES);
-        DSLContext createCloud = DSL.using(conexaoCloud, SQLDialect.POSTGRES);
+        // Carrega apenas os IDs
+        Set<Long> localIds = new HashSet<>(local
+                .select(field(pkColumn))
+                .from(table(tabela))
+                .fetch()
+                .map(rec -> ((Number) rec.get(0)).longValue()));
 
-        Set<Long> registrosLocal = new HashSet<>();
-        Set<Long> registrosCloud = new HashSet<>();
+        Set<Long> cloudIds = new HashSet<>(cloud
+                .select(field(pkColumn))
+                .from(table(tabela))
+                .fetch()
+                .map(rec -> ((Number) rec.get(0)).longValue()));
 
-        Result<Record1<Object>> sqlLocal = createLocal
-                .select(DSL.field(pkColumn))
-                .from(DSL.table(tabela))
-                .fetch();
+        // Falta no cloud → DELETE
+        Set<Long> desconhecidos = new HashSet<>(localIds);
+        desconhecidos.removeAll(cloudIds);
 
-        Result<Record1<Object>> sqlCloud = createCloud
-                .select(DSL.field(pkColumn))
-                .from(DSL.table(tabela))
-                .fetch();
+        // Falta no local → INSERT
+        Set<Long> extras = new HashSet<>(cloudIds);
+        extras.removeAll(localIds);
 
-        if (sqlLocal == null || sqlCloud == null) {
-            return null;
-        }
+        List<String> sql = new ArrayList<>();
 
-        for (Record1<Object> local : sqlLocal) {
-            registrosLocal.add(((Number) local.getValue(pkColumn)).longValue());
-        }
+        sql.addAll(operacaoBancoService.registroDesconhecidoEmLote(conexaoLocal, tabela, desconhecidos, pkColumn));
+        sql.addAll(operacaoBancoService.registroExtraEmLote(conexaoCloud, tabela, extras, pkColumn));
 
-        for (Record1<Object> cloud : sqlCloud) {
-            registrosCloud.add(((Number) cloud.getValue(pkColumn)).longValue());
-        }
-
-        Set<Long> registrosDesconhecidos = new HashSet<>(registrosLocal);
-        registrosDesconhecidos.removeAll(registrosCloud);
-
-        for (Long idDesconhecido : registrosDesconhecidos) {
-            sqlCache.addAll(operacaoBancoService.registroDesconhecido(conexaoLocal, tabela, idDesconhecido, pkColumn));
-        }
-
-        Set<Long> registrosExtras = new HashSet<>(registrosCloud);
-        registrosExtras.removeAll(registrosLocal);
-
-        for (Long idExtra : registrosExtras) {
-            sqlCache.addAll(operacaoBancoService.registroExtra(conexaoLocal, conexaoCloud, tabela, idExtra, pkColumn));
-        }
-
-        return sqlCache;
+        return sql;
     }
 
     public Map<Object, String> calcularHashesEmBote(DSLContext context, String tabela, String pkColumn, Set<Object> ids,

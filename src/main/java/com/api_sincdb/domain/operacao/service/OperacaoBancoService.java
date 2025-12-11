@@ -1,16 +1,10 @@
 package com.api_sincdb.domain.operacao.service;
 
-import java.beans.Statement;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.BatchUpdateException;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,28 +12,22 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.jooq.Table;
 import org.jooq.conf.ParamType;
-import org.jooq.exception.DataAccessException;
-import org.jooq.impl.DSL;
 import org.jooq.Record;
-import org.jooq.Result;
-import org.jooq.impl.SQLDataType;
-import org.jooq.util.postgres.PGobject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import java.sql.Statement;
 
 import com.api_sincdb.websocket.LogPublisher;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class OperacaoBancoService {
@@ -53,44 +41,60 @@ public class OperacaoBancoService {
     @Autowired
     private InsertSqlBuilderService insertSqlBuilderService;
 
-    public List<String> registroDesconhecido(Connection connection, String tabela, Long id, String pkColumn) {
-        DSLContext dsl = DSL.using(connection);
-
-        Table<Record> tabelaRecord = DSL.table(tabela);
-
-        List<String> queryList = new ArrayList<>();
-
-        String deleteQuery = dsl.delete(tabelaRecord)
-                .where(DSL.field(pkColumn).eq(id))
-                .getSQL(ParamType.INLINED)
-                .toString();
-
-        queryList.add(deleteQuery);
-        // queryList.add(";\n");
-
-        return queryList;
-
-    }
-
-    public List<String> registroExtra(Connection conexaoLocal, Connection conexaoCloud, String tabela, Long id,
+    public List<String> registroDesconhecidoEmLote(
+            Connection conexaoLocal,
+            String tabela,
+            Set<Long> idsDesconhecidos,
             String pkColumn) throws SQLException {
-        List<String> queryList = new ArrayList<>();
 
-        String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " = ?";
-        try (PreparedStatement stmt = conexaoCloud.prepareStatement(sql)) {
-            stmt.setLong(1, id);
+        if (idsDesconhecidos.isEmpty())
+            return List.of();
 
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) {
-                    String insertSQL = insertSqlBuilderService.construirInsertSQL(tabela, rs);
-                    queryList.add(insertSQL);
-                } else {
-                    throw new SQLException("Nenhum dado encontrado na tabela '" + tabela + "' com ID " + id);
-                }
+        String inClause = idsDesconhecidos.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(", "));
+
+        String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " IN (" + inClause + ")";
+
+        List<String> deletes = new ArrayList<>();
+
+        try (Statement stmt = conexaoLocal.createStatement();
+                ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                deletes.add("DELETE FROM " + tabela + " WHERE " + pkColumn + " = " + rs.getLong(pkColumn));
             }
         }
 
-        return queryList;
+        return deletes;
+    }
+
+    public List<String> registroExtraEmLote(
+            Connection conexaoCloud,
+            String tabela,
+            Set<Long> idsExtras,
+            String pkColumn) throws SQLException {
+
+        if (idsExtras.isEmpty())
+            return List.of();
+
+        String inClause = idsExtras.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(", "));
+
+        String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " IN (" + inClause + ")";
+
+        List<String> inserts = new ArrayList<>();
+
+        try (Statement stmt = conexaoCloud.createStatement();
+                ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                inserts.add(insertSqlBuilderService.construirInsertSQL(tabela, rs));
+            }
+        }
+
+        return inserts;
     }
 
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
@@ -99,7 +103,6 @@ public class OperacaoBancoService {
             int totalQueries = queries.values().stream().mapToInt(List::size).sum();
             AtomicInteger queriesExecutadas = new AtomicInteger(0);
 
-            // Deixar o commit manual
             conexao.setAutoCommit(false);
 
             for (Map.Entry<String, List<String>> grupo : queries.entrySet()) {
@@ -164,7 +167,6 @@ public class OperacaoBancoService {
                 throw e;
             }
         }
-        conexao.commit();
     }
 
     public String extrairNomeTabelaDaQuery(String query) {
@@ -192,7 +194,7 @@ public class OperacaoBancoService {
 
     public List<String> cargaInicialCompleta(Connection conexaoCloud, Connection conexaoLocal, String tabela)
             throws SQLException {
-        // Map para armazenar as instruções SQL (cache)
+
         List<String> sqlCache = new ArrayList<>();
 
         final int BATCH_SIZE = 1000;
@@ -209,17 +211,23 @@ public class OperacaoBancoService {
 
                 try (ResultSet rs = cloudStmt.executeQuery(query)) {
                     if (rs.isBeforeFirst()) {
-                        // Coletar os registros e construir as instruções SQL
+
                         while (rs.next()) {
-                            // Supondo que a primeira coluna seja a chave (id)
+
                             String id = rs.getString(1);
-                            // Construir a instrução SQL
-                            String sql = insertSqlBuilderService.construirInsertSQL(tabela, rs);
-                            // Armazenar a instrução SQL no Map
+
+                            String sql;
+
+                            try {
+                                sql = insertSqlBuilderService.construirInsertSQL(tabela, rs);
+                            } catch (Exception ex) {
+                                logPublisher.enviarLog("Erro ao construir SQL para tabela " + tabela + ": " + ex);
+                                throw new SQLException("Falha ao gerar INSERT da tabela " + tabela, ex);
+                            }
+
                             sqlCache.add(sql);
                         }
 
-                        // Verificar se terminou a paginação
                         if (sqlCache.size() < PAGE_SIZE) {
                             break;
                         }
@@ -236,13 +244,14 @@ public class OperacaoBancoService {
             handleBatchUpdateException(e, tabela);
         } catch (SQLException e) {
             conexaoLocal.rollback();
+            logPublisher.enviarLog("Erro durante a execução do lote: " + e);
             throw e;
         }
 
         // Retornar o Map com todas as instruções SQL
         return sqlCache;
     }
-  
+
     // Método para tratar exceções de lote
     private void handleBatchUpdateException(BatchUpdateException e, String tabela) {
         logPublisher.enviarLog("Erro durante a execução do lote: " + e.getMessage());
