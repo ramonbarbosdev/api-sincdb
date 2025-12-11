@@ -37,8 +37,6 @@ import com.api_sincdb.util.DicionarioTipoSql;
 import com.api_sincdb.util.Pair;
 import com.api_sincdb.util.UtilsSync;
 
-
-
 @Service
 public class DatabaseService {
 
@@ -50,7 +48,6 @@ public class DatabaseService {
 
     public List<String> listarBases(String database, TipoConexao tipo) {
         List<String> bases = new ArrayList<>();
-
 
         try (Connection conexao = conexaoBanco.abrirConexao(database, tipo, "")) {
             String query = "SELECT datname FROM pg_database WHERE datistemplate = false and  datname not  in ('_dodb', 'defaultdb')";
@@ -285,19 +282,33 @@ public class DatabaseService {
                 Statement stmtCloud = conexaoCloud.createStatement();
                 ResultSet rsCloud = stmtCloud.executeQuery(queryFuncoes)) {
             while (rsCloud.next()) {
+
                 String schema = rsCloud.getString("schema_name");
                 String nomeFuncao = rsCloud.getString("function_name");
-                String argumentos = rsCloud.getString("arguments");
+                String argumentos = rsCloud.getString("arguments"); // assinatura ex: "integer, text"
                 String definicao = rsCloud.getString("function_definition");
 
-                sqlCache.add(definicao);
-                // if (!funcaoExiste(conexaoLocal, schema, nomeFuncao, argumentos))
-                // {
-                // }
+                // Verifica no LOCAL se a função já existe
+                if (!funcaoExiste(conexaoLocal, schema, nomeFuncao, argumentos)) {
+
+                    // Ajusta a definição para garantir CREATE OR REPLACE
+                    String definicaoAjustada = ajustarCreateOrReplace(definicao);
+
+                    sqlCache.add(definicaoAjustada);
+                }
             }
         }
 
         return sqlCache;
+    }
+
+    private String ajustarCreateOrReplace(String definicao) {
+        if (definicao == null)
+            return null;
+
+        return definicao
+                .replaceFirst("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+                .replaceFirst("create function", "CREATE OR REPLACE FUNCTION");
     }
 
     private boolean funcaoExiste(Connection conexao, String schema, String nomeFuncao, String argumentos)
@@ -525,8 +536,5 @@ public class DatabaseService {
         }
 
     }
-
-
-   
 
 }

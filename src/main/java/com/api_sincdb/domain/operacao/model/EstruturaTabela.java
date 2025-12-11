@@ -7,6 +7,10 @@ public class EstruturaTabela
     private String erro;
     private String querys;
 
+    public EstruturaTabela(String tabela, String acao) {
+        this.tabela = tabela;
+        this.acao = acao;
+    }
     public void setTabela(String tabela)
     {
         this.tabela = tabela;

@@ -83,7 +83,8 @@ public class EstruturaService {
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
 
-            HashMap<String, List<String>> queries = processarTabelas(conexaoCloud, conexaoLocal, tabelasCloud,
+            HashMap<String, List<String>> queries = (HashMap<String, List<String>>) processarTabelas(conexaoCloud,
+                    conexaoLocal, tabelasCloud,
                     tabelasLocal, detalhes, database, esquema, nomeTabela);
 
             if (queries != null) {
@@ -138,7 +139,7 @@ public class EstruturaService {
         return response;
     }
 
-    public HashMap<String, List<String>> processarTabelas(
+    public Map<String, List<String>> processarTabelas(
             Connection conexaoCloud,
             Connection conexaoLocal,
             Set<String> tabelasCloud,
@@ -148,141 +149,169 @@ public class EstruturaService {
             String esquema,
             String nomeTabela)
             throws SQLException, InterruptedException {
-        List<String> criacaoSchema = Collections.synchronizedList(new ArrayList<>());
-        List<String> sequencias = Collections.synchronizedList(new ArrayList<>());
-        List<String> criacoesTabela = Collections.synchronizedList(new ArrayList<>());
-        List<String> chavesEstrangeiras = Collections.synchronizedList(new ArrayList<>());
-        List<String> alteracoes = Collections.synchronizedList(new ArrayList<>());
-        List<String> funcoes = Collections.synchronizedList(new ArrayList<>());
-        List<String> extensoes = Collections.synchronizedList(new ArrayList<>());
-        List<String> views = Collections.synchronizedList(new ArrayList<>());
-        List<String> dropViewsDependentes = Collections.synchronizedList(new ArrayList<>());
-        List<String> createViewsDependentes = Collections.synchronizedList(new ArrayList<>());
 
         processoService.iniciarProcesso(database);
+        logPublisher.enviarLog("Iniciando processamento...");
 
-        int totalTabelas = tabelasCloud.size();
-        AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas",
-                null);
+        Map<String, List<String>> resultado = new LinkedHashMap<>();
 
-        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas");
+        Map<String, List<String>> infraBase = construirInfraestruturaBanco(
+                conexaoCloud, conexaoLocal, database, esquema, detalhes);
 
-        Set<String> verificarSchemasCriados = new HashSet<>();
 
-        // CRIAR SEQUENCIA
+        Map<String, List<String>> tabelas = processarTabelasIndividuais(
+                conexaoCloud, conexaoLocal, tabelasCloud, tabelasLocal, detalhes, database);
+
+        resultado.put("Schemas", tabelas.getOrDefault("Schemas", List.of()));
+        resultado.put("Sequências", infraBase.getOrDefault("Sequências", List.of()));
+        resultado.put("Criação de Tabelas", tabelas.getOrDefault("Criação de Tabelas", List.of()));
+        resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
+        resultado.put("DropViewsDependentes", tabelas.getOrDefault("DropViewsDependentes", List.of()));
+        resultado.put("Alterações", tabelas.getOrDefault("Alterações", List.of()));
+        resultado.put("CreateViewsDependentes", tabelas.getOrDefault("CreateViewsDependentes", List.of()));
+        resultado.put("Views", infraBase.getOrDefault("Views", List.of()));
+        resultado.put("Extensões", infraBase.getOrDefault("Extensões", List.of()));
+        resultado.put("Funções", infraBase.getOrDefault("Funções", List.of()));
+
+        processoService.enviarProgresso("Concluído", 100, "Processamento concluído", null);
+        logPublisher.enviarLog("Processamento concluído com sucesso");
+
+        return resultado;
+    }
+
+    public Map<String, List<String>> construirInfraestruturaBanco(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String database,
+            String esquema,
+            List<EstruturaTabela> detalhes) throws SQLException {
+
+        Map<String, List<String>> infra = new LinkedHashMap<>();
+
+        List<String> schemas = new ArrayList<>();
+        List<String> sequencias = new ArrayList<>();
+        List<String> funcoes = new ArrayList<>();
+        List<String> extensoes = new ArrayList<>();
+        List<String> views = new ArrayList<>();
+
+        // 1. Sequências
         String sequenciaQuery = databaseService.criarSequenciaQuery(conexaoCloud, conexaoLocal, esquema);
         if (sequenciaQuery != null)
             sequencias.add(sequenciaQuery);
 
-        // CRIAR FUNCOES
-        List<String> funcao = databaseService.criarFuncoesQuery(conexaoCloud, conexaoLocal);
-        if (funcao.size() > 0) {
-            EstruturaTabela infoEstruturaFuncao = new EstruturaTabela();
-            funcoes.addAll(funcao);
-            infoEstruturaFuncao.setTabela("Todas");
-            infoEstruturaFuncao.setAcao("Funçao");
-            detalhes.add(infoEstruturaFuncao);
-
+        // 2. Funções
+        List<String> f = databaseService.criarFuncoesQuery(conexaoCloud, conexaoLocal);
+        if (!f.isEmpty()) {
+            funcoes.addAll(f);
+            detalhes.add(new EstruturaTabela("Todas", "Função"));
         }
 
-        // CRIAR EXTENSOES
-        List<String> extencao = databaseService.gerarScriptsExtensoes(conexaoCloud, conexaoLocal);
-        if (extencao.size() > 0) {
-            EstruturaTabela infoEstruturaExtencao = new EstruturaTabela();
-            extensoes.addAll(extencao);
-            infoEstruturaExtencao.setTabela("Todas");
-            infoEstruturaExtencao.setAcao("Extencao");
-            detalhes.add(infoEstruturaExtencao);
+        // 3. Extensões
+        List<String> e = databaseService.gerarScriptsExtensoes(conexaoCloud, conexaoLocal);
+        if (!e.isEmpty()) {
+            extensoes.addAll(e);
+            detalhes.add(new EstruturaTabela("Todas", "Extensão"));
         }
 
-        // CRIAR VIEWS
-        List<String> scriptsViews = databaseService.gerarScriptsViews(conexaoCloud, conexaoLocal, esquema);
-        if (!scriptsViews.isEmpty()) {
-            views.addAll(scriptsViews);
-
-            EstruturaTabela infoEstruturaViews = new EstruturaTabela();
-            infoEstruturaViews.setTabela("Todas");
-            infoEstruturaViews.setAcao("Views");
-            detalhes.add(infoEstruturaViews);
+        // 4. Views
+        List<String> v = databaseService.gerarScriptsViews(conexaoCloud, conexaoLocal, esquema);
+        if (!v.isEmpty()) {
+            views.addAll(v);
+            detalhes.add(new EstruturaTabela("Todas", "Views"));
         }
 
-        for (String itemTabela : tabelasCloud) {
+        infra.put("Extensões", extensoes);
+        infra.put("Funções", funcoes);
+        infra.put("Sequências", sequencias);
+        infra.put("Views", views);
+
+        logPublisher.enviarLog("Infraestrutura do banco concluída.");
+
+        return infra;
+    }
+
+    public Map<String, List<String>> processarTabelasIndividuais(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            Set<String> tabelasCloud,
+            Set<String> tabelasLocal,
+            List<EstruturaTabela> detalhes,
+            String database)
+            throws SQLException, InterruptedException {
+
+        Map<String, List<String>> tabelas = new LinkedHashMap<>();
+
+        List<String> criacaoSchema = new ArrayList<>();
+        List<String> criacoesTabela = new ArrayList<>();
+        List<String> fks = new ArrayList<>();
+        List<String> alteracoes = new ArrayList<>();
+        List<String> dropViewsDependentes = new ArrayList<>();
+        List<String> createViewsDependentes = new ArrayList<>();
+
+        Set<String> schemasCriados = new HashSet<>();
+
+        int totalTabelas = tabelasCloud.size();
+        AtomicInteger processadas = new AtomicInteger();
+
+        processoService.enviarProgresso("Iniciando", 0, "Processando " + totalTabelas + " tabelas", null);
+        logPublisher.enviarLog("Processando " + totalTabelas + " tabelas");
+
+        for (String tabela : tabelasCloud) {
 
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
 
-            int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
-            processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + itemTabela, itemTabela);
+            int progresso = (int) ((processadas.incrementAndGet() / (double) totalTabelas) * 100);
+            processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + tabela, tabela);
+            logPublisher.enviarLog("Processando tabela: " + tabela);
 
-            EstruturaTabela infoEstrutura = new EstruturaTabela();
+            String schema = utilsSync.extrairSchema(tabela);
 
-            if (!tabelasLocal.contains(itemTabela)) {
-                logPublisher.enviarLog("Criando estrutura da tabela: " + itemTabela);
+            if (!tabelasLocal.contains(tabela)) {
 
-                String schema = utilsSync.extrairSchema(itemTabela);
-                if (schema != null && !verificarSchemasCriados.contains(schema)) {
-                    String querySchema = databaseService.gerarQueryCriacaoSchemas(conexaoLocal, schema);
-                    if (querySchema != null && !querySchema.isBlank()) {
-                        criacaoSchema.add(querySchema);
-                        verificarSchemasCriados.add(schema);
-                    }
+                // Criar schema, se necessário
+                if (schema != null && schemasCriados.add(schema)) {
+                    String schemaQuery = databaseService.gerarQueryCriacaoSchemas(conexaoLocal, schema);
+                    if (schemaQuery != null && !schemaQuery.isBlank())
+                        criacaoSchema.add(schemaQuery);
                 }
 
-                String queryTabela = criacaoTabelaService.criarEstuturaTabela(conexaoCloud, itemTabela);
-                if (queryTabela != null && !queryTabela.isBlank()) {
-                    criacoesTabela.add(queryTabela);
-                    infoEstrutura.setTabela(itemTabela);
-                    infoEstrutura.setAcao("Criação");
-                    detalhes.add(infoEstrutura);
+                // Criar tabela
+                String create = criacaoTabelaService.criarEstuturaTabela(conexaoCloud, tabela);
+                if (create != null && !create.isBlank()) {
+                    criacoesTabela.add(create);
+                    detalhes.add(new EstruturaTabela(tabela, "Criação"));
                 }
 
-                String fkQuery = databaseService.obterChaveEstrangeira(conexaoCloud, itemTabela);
-                if (fkQuery != null)
-                    chavesEstrangeiras.add(fkQuery);
+                // FK
+                String fk = databaseService.obterChaveEstrangeira(conexaoCloud, tabela);
+                if (fk != null)
+                    fks.add(fk);
+
             } else {
-                logPublisher.enviarLog("Verificando alteração na tabela: " + itemTabela);
-
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
-                        conexaoLocal, itemTabela);
+                        conexaoLocal, tabela);
 
                 if (resultado.hasChanges()) {
 
                     atualizarEstruturaService.gerarScriptsViewsDependentes(
-                            conexaoCloud,
-                            conexaoLocal,
-                            itemTabela,
-                            resultado,
-                            dropViewsDependentes,
-                            createViewsDependentes);
+                            conexaoCloud, conexaoLocal, tabela, resultado,
+                            dropViewsDependentes, createViewsDependentes);
 
                     alteracoes.addAll(resultado.getAlteracoes());
-
-                    infoEstrutura.setTabela(itemTabela);
-                    infoEstrutura.setAcao("Atualização");
-                    detalhes.add(infoEstrutura);
+                    detalhes.add(new EstruturaTabela(tabela, "Atualização"));
                 }
-
             }
-
         }
 
-        processoService.enviarProgresso("Concluido", 100, "Processamento concluído com sucesso", null);
-        logPublisher.enviarLog("Verificação concluída com sucesso");
+        tabelas.put("Schemas", criacaoSchema);
+        tabelas.put("Criação de Tabelas", criacoesTabela);
+        tabelas.put("DropViewsDependentes", dropViewsDependentes);
+        tabelas.put("Alterações", alteracoes);
+        tabelas.put("Chaves Estrangeiras", fks);
+        tabelas.put("CreateViewsDependentes", createViewsDependentes);
 
-        HashMap<String, List<String>> queries = new LinkedHashMap<>();
-        queries.put("Schemas", criacaoSchema);
-        queries.put("Sequências", sequencias);
-        queries.put("Criação de Tabelas", criacoesTabela);
-        queries.put("Chaves Estrangeiras", chavesEstrangeiras);
-        queries.put("DropViewsDependentes", dropViewsDependentes);
-        queries.put("Alterações", alteracoes);
-        queries.put("CreateViewsDependentes", createViewsDependentes);
-        queries.put("Views", views);
-        queries.put("Extenção", extencao);
-        queries.put("Função", funcoes);
-
-        return queries;
+        return tabelas;
     }
 
     // ================================================================
