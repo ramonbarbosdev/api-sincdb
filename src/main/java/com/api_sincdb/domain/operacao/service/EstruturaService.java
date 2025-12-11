@@ -63,6 +63,10 @@ public class EstruturaService {
     @Autowired
     private LogPublisher logPublisher;
 
+    // ================================================================
+    // FUNCOES PRINCIPAIS
+    // ================================================================
+
     public Map<String, Object> verificarEstrutura(String token, String database, String esquema, String nomeTabela) {
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -159,13 +163,13 @@ public class EstruturaService {
 
         int totalTabelas = tabelasCloud.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas", null);
+        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas",
+                null);
 
         logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas");
 
         Set<String> verificarSchemasCriados = new HashSet<>();
 
-     
         // CRIAR SEQUENCIA
         String sequenciaQuery = databaseService.criarSequenciaQuery(conexaoCloud, conexaoLocal, esquema);
         if (sequenciaQuery != null)
@@ -204,8 +208,6 @@ public class EstruturaService {
         }
 
         for (String itemTabela : tabelasCloud) {
-
-        
 
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
@@ -283,6 +285,10 @@ public class EstruturaService {
         return queries;
     }
 
+    // ================================================================
+    // UTILITÁRIOS
+    // ================================================================
+
     public Set<String> obterTabelas(Connection conexao, String base, String nomeTabela)
             throws InterruptedException, ExecutionException, TimeoutException {
         Set<String> tabelas = databaseService.obterTabelaMetaData(base, conexao);
@@ -293,14 +299,6 @@ public class EstruturaService {
         }
 
         return tabelas;
-    }
-
-    public void validarEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
-            String tabela) throws SQLException {
-        if (tabela != null
-                && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
-            throw new SQLException("Estrutura da tabela " + tabela + " divergente entre cloud e local");
-        }
     }
 
 }

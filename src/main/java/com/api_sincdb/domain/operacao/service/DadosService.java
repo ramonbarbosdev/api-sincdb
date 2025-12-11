@@ -42,13 +42,8 @@ import com.api_sincdb.websocket.LogPublisher;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
 
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.table;
-
 @Service
 public class DadosService {
-    @Autowired
-    private DatabaseService databaseService;
 
     @Autowired
     private AtualizarEstruturaService atualizarEstruturaService;
@@ -73,6 +68,16 @@ public class DadosService {
 
     @Autowired
     private LogPublisher logPublisher;
+
+    @Autowired
+    private CriarInsertsDadosService criarInsertsDadosService;
+
+    @Autowired
+    private AtualizarDadosService atualizarDadosService;
+
+    // ================================================================
+    // FUNCOES PRINCIPAIS
+    // ================================================================
 
     public Map<String, Object> verificarDados(String token, String database, String tabela) {
         Map<String, Object> response = new HashMap<String, Object>();
@@ -128,6 +133,9 @@ public class DadosService {
 
             operacaoBancoService.executarQueriesEmLotes(conexaoLocal, querys, detalhes);
 
+            // To:do - construir uma tela a consultar a integridade dos dados
+            // validarIntegridadeDados(conexaoLocal, response);
+
             List<String> listaErro = new ArrayList<>();
             for (Map<String, String> erro : detalhes) {
                 listaErro.add(erro.get("errors"));
@@ -146,6 +154,168 @@ public class DadosService {
         }
 
         return response;
+    }
+
+    public HashMap<String, List<String>> obterDadosTabela(
+            String database,
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String tabela,
+            List<TabelaDetalhe> detalhes) throws SQLException, InterruptedException {
+
+        processoService.iniciarProcesso(database);
+
+        Map<String, Object> parametrosMap = carregarOrdemTabela(conexaoCloud, conexaoLocal, tabela);
+        List<String> tabelas = (List<String>) parametrosMap.get("ordemCarga");
+
+        // querys
+        List<String> criacaoAtualizacaoSeq = Collections.synchronizedList(new ArrayList<>());
+        List<String> criacaoDados = Collections.synchronizedList(new ArrayList<>());
+        List<String> atualizacaoDados = Collections.synchronizedList(new ArrayList<>());
+
+        // Processamento
+        int totalTabelas = tabelas.size();
+        AtomicInteger tabelasProcessadas = new AtomicInteger(0);
+        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.",
+                null);
+
+        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas.");
+
+        for (String itemTabela : tabelas) {
+            if (Thread.currentThread().isInterrupted())
+                throw new InterruptedException("Cancelado");
+
+            int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
+            processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + itemTabela, itemTabela);
+
+            Map<String, Object> parametros = definirParametrosVerificacao(conexaoCloud, conexaoLocal, itemTabela);
+
+            if (parametros != null) {
+                TabelaDetalhe infoDetalhe = new TabelaDetalhe();
+
+                if ((Boolean) parametros.get("novo")) {
+                    logPublisher.enviarLog("Criacao da script da '" + itemTabela + "'.");
+
+                    List<String> query = criarInsertsDadosService.cargaInicialCompleta(conexaoCloud, conexaoLocal,
+                            itemTabela);
+
+                    if (query.size() > 0) {
+                        infoDetalhe.setTabela(itemTabela);
+                        infoDetalhe.setAcao("Inserção");
+                        infoDetalhe.setLinhaInseridas(query.size());
+                        detalhes.add(infoDetalhe);
+                        criacaoDados.addAll(query);
+                    }
+
+                } else if ((Boolean) parametros.get("existente")) {
+
+                    logPublisher.enviarLog("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
+
+                    String pkColumn = (String) parametros.get("pkColumn");
+
+                    List<String> query = atualizarDadosService.verificarConsistenciaRegistros(conexaoLocal,
+                            conexaoCloud, itemTabela,
+                            pkColumn);
+
+                    if (query.size() > 0) {
+                        infoDetalhe.setTabela(itemTabela);
+                        infoDetalhe.setAcao("Atualização");
+                        infoDetalhe.setLinhaAtualizadas(query.size());
+                        infoDetalhe.setQuerys(String.join(";\n", query));
+                        detalhes.add(infoDetalhe);
+                        atualizacaoDados.addAll(query);
+                    }
+
+                } else {
+                    logPublisher.enviarLog("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");
+
+                }
+
+                String querySeq = atualizarSequencias(conexaoLocal, itemTabela);
+                if (querySeq != null) {
+                    infoDetalhe.setTabela(itemTabela);
+                    infoDetalhe.setAcao("Atualização Sequencia");
+                    infoDetalhe.setLinhaInseridas(1);
+                    infoDetalhe.setQuerys(querySeq);
+                    detalhes.add(infoDetalhe);
+                    criacaoAtualizacaoSeq.add(querySeq);
+                }
+            }
+
+        }
+
+        // Processamento
+        processoService.enviarProgresso("Concluido", 100, "Verificação concluída com sucesso", null);
+        logPublisher.enviarLog("Verificação concluída com sucesso");
+
+        HashMap<String, List<String>> queries = new LinkedHashMap<>();
+        queries.put("Criacao", criacaoDados);
+        queries.put("Atualizacao", atualizacaoDados);
+        queries.put("Sequencia", criacaoAtualizacaoSeq);
+
+        return queries;
+    }
+
+    // ================================================================
+    // UTILITÁRIOS
+    // ================================================================
+
+    public String atualizarSequencias(Connection connection, String nomeTabela) throws SQLException {
+        String pkColumn = obterNomeColunaPK(connection, nomeTabela);
+        String seq = consultarSequenciasPorTabela(connection, nomeTabela);
+
+        if (seq == null)
+            return "";
+
+        String query = String.format(
+                "SELECT setval('%s', " +
+                        "COALESCE((SELECT MAX(CASE WHEN %s::TEXT ~ '^[0-9]+$' THEN %s::BIGINT ELSE NULL END) FROM %s), 1), true);",
+                seq, pkColumn, pkColumn, nomeTabela);
+
+        return query;
+    }
+
+    public String consultarSequenciasPorTabela(Connection conexao, String nomeTabela) {
+        String seq = null;
+
+        String tabela = utilsSync.extrairTabela(nomeTabela);
+        String schema = utilsSync.extrairSchema(nomeTabela);
+
+        try {
+
+            String query = "select " +
+                    "t.table_schema, " +
+                    "t.table_name, " +
+                    "c.column_name, " +
+                    "c.column_default, " +
+                    "s.schemaname AS sequence_schema, " +
+                    "s.sequencename AS sequence_name, " +
+                    "s.last_value " +
+                    "from information_schema.columns c " +
+                    "join information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema "
+                    +
+                    "join pg_sequences s on c.column_default like '%nextval(''' || s.sequencename || '''%' " +
+                    "where t.table_name = ? " +
+                    "and t.table_schema = ? ;";
+
+            PreparedStatement stmt = conexao.prepareStatement(query.toString());
+
+            stmt.setString(1, tabela);
+            stmt.setString(2, schema);
+
+            ResultSet rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                String sequenceName = rs.getString("sequence_name");
+
+                seq = sequenceName;
+
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        return seq != null ? seq : null;
     }
 
     public long obterMaxId(Connection conexao, String tabela, String nomeColuna) throws SQLException {
@@ -257,7 +427,6 @@ public class DadosService {
 
     public Map<String, Object> carregarOrdemTabela(Connection conexaoCloud, Connection conexaoLocal,
             String tabela) throws SQLException {
-        System.out.println("Iniciando verificação de dados...");
 
         Map<String, Object> parametrosMap = new HashMap<String, Object>();
 
@@ -283,6 +452,15 @@ public class DadosService {
     public void ativarConstraints(Connection conn) throws SQLException {
         try (java.sql.Statement stmt = conn.createStatement()) {
             stmt.execute("SET session_replication_role = origin");
+        }
+    }
+
+    public void validarIntegridadeDados(Connection conexaoLocal, Map<String, Object> response) throws SQLException {
+        Map<String, Object> validacao = validarIntegridadeComRelatorio(conexaoLocal);
+        response.put("validacao", validacao);
+
+        if (!(Boolean) validacao.getOrDefault("integridade_ok", true)) {
+            logPublisher.enviarLog("Problemas de integridade encontrados");
         }
     }
 
@@ -349,23 +527,6 @@ public class DadosService {
         return relatorio;
     }
 
-    public void validarEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
-            String tabela) throws SQLException {
-        if (tabela != null
-                && atualizarEstruturaService.compararEstruturaTabela(conexaoCloud, conexaoLocal, tabela) != null) {
-            throw new SQLException("Estrutura da tabela " + tabela + " divergente entre cloud e local");
-        }
-    }
-
-    public void validarIntegridadeDados(Connection conexaoLocal, Map<String, Object> response) throws SQLException {
-        Map<String, Object> validacao = validarIntegridadeComRelatorio(conexaoLocal);
-        response.put("validacao", validacao);
-
-        if (!(Boolean) validacao.getOrDefault("integridade_ok", true)) {
-            throw new SQLException("Problemas de integridade encontrados");
-        }
-    }
-
     public List<String> filtrarTabelasRelevantes(String filtroParcial, List<String> ordemCarga,
             Map<String, Set<String>> dependencias) {
 
@@ -399,10 +560,9 @@ public class DadosService {
             Set<String> tabelasRelevantes, Set<String> visitado, Set<String> ciclo) {
 
         if (ciclo.contains(tabela)) {
-            System.out.println("Ciclo detectado em: " + tabela);
 
             dependencias.getOrDefault(tabela, new HashSet<>()).clear();
-            // return;
+
         }
         if (visitado.contains(tabela)) {
             return;
@@ -423,18 +583,19 @@ public class DadosService {
 
         Map<String, Object> parametros = new HashMap<String, Object>();
 
-        if (tabela == null)
+        if (tabela == null) {
+            logPublisher.enviarLog("Tabela não especificada.");
             throw new SQLException("Tabela não especificada.");
+        }
+        
         String pkColumn = obterNomeColunaPK(conexaoCloud, tabela);
 
         if (pkColumn == null)
             return null;
-        String schema = utilsSync.extrairSchema(tabela);
-        String nomeTabelaSimples = utilsSync.extrairTabela(tabela);
 
         long maxCloudId = obterMaxId(conexaoCloud, tabela, pkColumn);
         long maxLocalId = obterMaxId(conexaoLocal, tabela, pkColumn);
-        int countCloud = obterQuantidadeRegistro(conexaoCloud, tabela);
+
         int countLocal = obterQuantidadeRegistro(conexaoLocal, tabela);
 
         if (maxCloudId == 0)
@@ -448,311 +609,11 @@ public class DadosService {
             parametros.put("novo", false);
             parametros.put("existente", true);
 
-            // desativado
-            // List<String> colunasParaHash = obterColunasParaHash(conexaoCloud, schema,
-            // nomeTabelaSimples, pkColumn);
-            // parametros.put("colunasParaHash", colunasParaHash);
             parametros.put("pkColumn", pkColumn);
 
         }
 
         return parametros;
-    }
-
-    public HashMap<String, List<String>> obterDadosTabela(
-            String database,
-            Connection conexaoCloud,
-            Connection conexaoLocal,
-            String tabela,
-            List<TabelaDetalhe> detalhes) throws SQLException, InterruptedException {
-
-        processoService.iniciarProcesso(database);
-
-        Map<String, Object> parametrosMap = carregarOrdemTabela(conexaoCloud, conexaoLocal, tabela);
-        List<String> tabelas = (List<String>) parametrosMap.get("ordemCarga");
-
-        // querys
-        List<String> criacaoAtualizacaoSeq = Collections.synchronizedList(new ArrayList<>());
-        List<String> criacaoDados = Collections.synchronizedList(new ArrayList<>());
-        List<String> atualizacaoDados = Collections.synchronizedList(new ArrayList<>());
-
-        // Processamento
-        int totalTabelas = tabelas.size();
-        AtomicInteger tabelasProcessadas = new AtomicInteger(0);
-        processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.",
-                null);
-
-        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas.");
-
-        for (String itemTabela : tabelas) {
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
-
-            int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
-            processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + itemTabela, itemTabela);
-
-            Map<String, Object> parametros = definirParametrosVerificacao(conexaoCloud, conexaoLocal, itemTabela);
-
-            if (parametros != null) {
-                TabelaDetalhe infoDetalhe = new TabelaDetalhe();
-
-                if ((Boolean) parametros.get("novo")) {
-                    logPublisher.enviarLog("Criacao da script da '" + itemTabela + "'.");
-
-                    List<String> query = operacaoBancoService.cargaInicialCompleta(conexaoCloud, conexaoLocal,
-                            itemTabela);
-
-                    if (query.size() > 0) {
-                        infoDetalhe.setTabela(itemTabela);
-                        infoDetalhe.setAcao("Inserção");
-                        infoDetalhe.setLinhaInseridas(query.size());
-                        detalhes.add(infoDetalhe);
-                        criacaoDados.addAll(query);
-                    }
-
-                } else if ((Boolean) parametros.get("existente")) {
-
-                    logPublisher.enviarLog("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
-
-                    String pkColumn = (String) parametros.get("pkColumn");
-
-                    List<String> query = verificarConsistenciaRegistros(conexaoLocal, conexaoCloud, itemTabela,
-                            pkColumn);
-
-                    if (query.size() > 0) {
-                        infoDetalhe.setTabela(itemTabela);
-                        infoDetalhe.setAcao("Atualização");
-                        infoDetalhe.setLinhaAtualizadas(query.size());
-                        infoDetalhe.setQuerys(String.join(";\n", query));
-                        detalhes.add(infoDetalhe);
-                        atualizacaoDados.addAll(query);
-                    }
-
-                } else {
-                    logPublisher.enviarLog("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");
-
-                }
-
-                String querySeq = atualizarSequencias(conexaoLocal, itemTabela);
-                if (querySeq != null) {
-                    infoDetalhe.setTabela(itemTabela);
-                    infoDetalhe.setAcao("Atualização Sequencia");
-                    infoDetalhe.setLinhaInseridas(1);
-                    infoDetalhe.setQuerys(querySeq);
-                    detalhes.add(infoDetalhe);
-                    criacaoAtualizacaoSeq.add(querySeq);
-                }
-            }
-
-        }
-
-        // Processamento
-        processoService.enviarProgresso("Concluido", 100, "Verificação concluída com sucesso", null);
-        logPublisher.enviarLog("Verificação concluída com sucesso");
-
-        HashMap<String, List<String>> queries = new LinkedHashMap<>();
-        queries.put("Criacao", criacaoDados);
-        queries.put("Atualizacao", atualizacaoDados);
-        queries.put("Sequencia", criacaoAtualizacaoSeq);
-
-        return queries;
-    }
-
-    public List<String> obterColunasParaHash(Connection conexao, String schema, String tabela, String pkColumn)
-            throws SQLException {
-        List<String> colunas = new ArrayList<>();
-
-        String sql = "SELECT column_name FROM information_schema.columns " +
-                "WHERE table_schema = ? AND table_name = ? AND column_name <> ? " +
-                "AND column_name NOT IN ('created_at', 'updated_at', 'version') " + // ajustar conforme seu caso
-                "ORDER BY ordinal_position";
-
-        try (PreparedStatement ps = conexao.prepareStatement(sql)) {
-            ps.setString(1, schema);
-            ps.setString(2, tabela);
-            ps.setString(3, pkColumn);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    colunas.add(rs.getString("column_name"));
-                }
-            }
-        }
-        return colunas;
-    }
-
-    public List<String> verificarConsistenciaRegistros(Connection conexaoLocal, Connection conexaoCloud, String tabela,
-            String pkColumn) throws SQLException {
-
-        DSLContext local = DSL.using(conexaoLocal, SQLDialect.POSTGRES);
-        DSLContext cloud = DSL.using(conexaoCloud, SQLDialect.POSTGRES);
-
-        // Carrega apenas os IDs
-        Set<Long> localIds = new HashSet<>(local
-                .select(field(pkColumn))
-                .from(table(tabela))
-                .fetch()
-                .map(rec -> ((Number) rec.get(0)).longValue()));
-
-        Set<Long> cloudIds = new HashSet<>(cloud
-                .select(field(pkColumn))
-                .from(table(tabela))
-                .fetch()
-                .map(rec -> ((Number) rec.get(0)).longValue()));
-
-        // Falta no cloud → DELETE
-        Set<Long> desconhecidos = new HashSet<>(localIds);
-        desconhecidos.removeAll(cloudIds);
-
-        // Falta no local → INSERT
-        Set<Long> extras = new HashSet<>(cloudIds);
-        extras.removeAll(localIds);
-
-        List<String> sql = new ArrayList<>();
-
-        sql.addAll(operacaoBancoService.registroDesconhecidoEmLote(conexaoLocal, tabela, desconhecidos, pkColumn));
-        sql.addAll(operacaoBancoService.registroExtraEmLote(conexaoCloud, tabela, extras, pkColumn));
-
-        return sql;
-    }
-
-    public Map<Object, String> calcularHashesEmBote(DSLContext context, String tabela, String pkColumn, Set<Object> ids,
-            List<String> colunas) {
-        Map<Object, String> hashMap = new HashMap<>();
-
-        Result<Record> resultados = context.select()
-                .from(DSL.table(tabela))
-                .where(DSL.field(pkColumn).in(ids))
-                .fetch();
-
-        for (Record record : resultados) {
-            Object id = record.get(pkColumn);
-            StringBuilder sb = new StringBuilder();
-            for (String coluna : colunas) {
-                Object valor = record.get(coluna);
-                sb.append(valor == null ? "NULL" : valor.toString());
-            }
-            String hash = sha256(sb.toString());
-            hashMap.put(id, hash);
-        }
-
-        return hashMap;
-    }
-
-    private String sha256(String base) {
-        try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(base.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder(2 * hash.length);
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1)
-                    hexString.append('0');
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (Exception ex) {
-            throw new RuntimeException(ex);
-        }
-    }
-
-    public void verificarConsistenciaDados(Connection conexaoLocal, Connection conexaoCloud, String tabela,
-            String pkColumn) throws SQLException {
-        // 1. Obtenha os registros das duas bases de dados
-        String sqlLocal = String.format("SELECT * FROM %s WHERE %s = ?", tabela, pkColumn);
-        String sqlCloud = String.format("SELECT * FROM %s WHERE %s = ?", tabela, pkColumn);
-
-        try (PreparedStatement stmtLocal = conexaoLocal.prepareStatement(sqlLocal);
-                PreparedStatement stmtCloud = conexaoCloud.prepareStatement(sqlCloud)) {
-
-            // Supondo que o PK seja único, então pegamos o ID
-            stmtLocal.setLong(1, 123);
-            stmtCloud.setLong(1, 123);
-
-            try (ResultSet rsLocal = stmtLocal.executeQuery();
-                    ResultSet rsCloud = stmtCloud.executeQuery()) {
-
-                // Verifica se o registro existe nas duas bases
-                if (rsLocal.next() && rsCloud.next()) {
-                    // Comparar todos os valores das colunas
-                    ResultSetMetaData rsMetaDataLocal = rsLocal.getMetaData();
-                    ResultSetMetaData rsMetaDataCloud = rsCloud.getMetaData();
-
-                    int columnCount = rsMetaDataLocal.getColumnCount();
-
-                    for (int i = 1; i <= columnCount; i++) {
-                        String columnName = rsMetaDataLocal.getColumnName(i);
-                        String localValue = rsLocal.getString(i);
-                        String cloudValue = rsCloud.getString(i);
-
-                        if (!localValue.equals(cloudValue)) {
-                            System.out.println("Diferença encontrada na coluna: " + columnName +
-                                    " | Base Local: " + localValue + " | Base Remota: " + cloudValue);
-                        }
-                    }
-                } else {
-                    System.out.println("Registro com ID " + 123 + " não encontrado em uma das bases.");
-                }
-            }
-        }
-    }
-
-    public String atualizarSequencias(Connection connection, String nomeTabela) throws SQLException {
-        String pkColumn = obterNomeColunaPK(connection, nomeTabela);
-        String seq = consultarSequenciasPorTabela(connection, nomeTabela);
-
-        if (seq == null)
-            return "";
-
-        String query = String.format(
-                "SELECT setval('%s', " +
-                        "COALESCE((SELECT MAX(CASE WHEN %s::TEXT ~ '^[0-9]+$' THEN %s::BIGINT ELSE NULL END) FROM %s), 1), true);",
-                seq, pkColumn, pkColumn, nomeTabela);
-
-        return query;
-    }
-
-    public String consultarSequenciasPorTabela(Connection conexao, String nomeTabela) {
-        String seq = null;
-
-        String tabela = utilsSync.extrairTabela(nomeTabela);
-        String schema = utilsSync.extrairSchema(nomeTabela);
-
-        try {
-
-            String query = "select " +
-                    "t.table_schema, " +
-                    "t.table_name, " +
-                    "c.column_name, " +
-                    "c.column_default, " +
-                    "s.schemaname AS sequence_schema, " +
-                    "s.sequencename AS sequence_name, " +
-                    "s.last_value " +
-                    "from information_schema.columns c " +
-                    "join information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema "
-                    +
-                    "join pg_sequences s on c.column_default like '%nextval(''' || s.sequencename || '''%' " +
-                    "where t.table_name = ? " +
-                    "and t.table_schema = ? ;";
-
-            PreparedStatement stmt = conexao.prepareStatement(query.toString());
-
-            stmt.setString(1, tabela);
-            stmt.setString(2, schema);
-
-            ResultSet rs = stmt.executeQuery();
-
-            while (rs.next()) {
-                String sequenceName = rs.getString("sequence_name");
-
-                seq = sequenceName;
-
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        return seq != null ? seq : null;
     }
 
 }

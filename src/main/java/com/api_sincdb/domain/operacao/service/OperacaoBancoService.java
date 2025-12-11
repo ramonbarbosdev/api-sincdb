@@ -1,31 +1,20 @@
 package com.api_sincdb.domain.operacao.service;
 
 import java.io.IOException;
-import java.sql.BatchUpdateException;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
-import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
-import org.jooq.Table;
-import org.jooq.conf.ParamType;
-import org.jooq.Record;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import java.sql.Statement;
+
 
 import com.api_sincdb.websocket.LogPublisher;
 
@@ -37,65 +26,6 @@ public class OperacaoBancoService {
 
     @Autowired
     private LogPublisher logPublisher;
-
-    @Autowired
-    private InsertSqlBuilderService insertSqlBuilderService;
-
-    public List<String> registroDesconhecidoEmLote(
-            Connection conexaoLocal,
-            String tabela,
-            Set<Long> idsDesconhecidos,
-            String pkColumn) throws SQLException {
-
-        if (idsDesconhecidos.isEmpty())
-            return List.of();
-
-        String inClause = idsDesconhecidos.stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(", "));
-
-        String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " IN (" + inClause + ")";
-
-        List<String> deletes = new ArrayList<>();
-
-        try (Statement stmt = conexaoLocal.createStatement();
-                ResultSet rs = stmt.executeQuery(sql)) {
-
-            while (rs.next()) {
-                deletes.add("DELETE FROM " + tabela + " WHERE " + pkColumn + " = " + rs.getLong(pkColumn));
-            }
-        }
-
-        return deletes;
-    }
-
-    public List<String> registroExtraEmLote(
-            Connection conexaoCloud,
-            String tabela,
-            Set<Long> idsExtras,
-            String pkColumn) throws SQLException {
-
-        if (idsExtras.isEmpty())
-            return List.of();
-
-        String inClause = idsExtras.stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(", "));
-
-        String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " IN (" + inClause + ")";
-
-        List<String> inserts = new ArrayList<>();
-
-        try (Statement stmt = conexaoCloud.createStatement();
-                ResultSet rs = stmt.executeQuery(sql)) {
-
-            while (rs.next()) {
-                inserts.add(insertSqlBuilderService.construirInsertSQL(tabela, rs));
-            }
-        }
-
-        return inserts;
-    }
 
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
             List<Map<String, String>> detalhes) throws IOException {
@@ -189,89 +119,9 @@ public class OperacaoBancoService {
             }
         }
 
-        return "desconhecida"; // Caso não consiga identificar
+        return "desconhecida";
     }
 
-    public List<String> cargaInicialCompleta(Connection conexaoCloud, Connection conexaoLocal, String tabela)
-            throws SQLException {
-
-        List<String> sqlCache = new ArrayList<>();
-
-        final int BATCH_SIZE = 1000;
-        final int PAGE_SIZE = 50000;
-        long offset = 0;
-
-        try (java.sql.Statement cloudStmt = conexaoCloud.createStatement(ResultSet.TYPE_FORWARD_ONLY,
-                ResultSet.CONCUR_READ_ONLY)) {
-            cloudStmt.setFetchSize(BATCH_SIZE);
-
-            while (true) {
-                String query = String.format("SELECT * FROM %s ORDER BY 1 LIMIT %d OFFSET %d", tabela, PAGE_SIZE,
-                        offset);
-
-                try (ResultSet rs = cloudStmt.executeQuery(query)) {
-                    if (rs.isBeforeFirst()) {
-
-                        while (rs.next()) {
-
-                            String id = rs.getString(1);
-
-                            String sql;
-
-                            try {
-                                sql = insertSqlBuilderService.construirInsertSQL(tabela, rs);
-                            } catch (Exception ex) {
-                                logPublisher.enviarLog("Erro ao construir SQL para tabela " + tabela + ": " + ex);
-                                throw new SQLException("Falha ao gerar INSERT da tabela " + tabela, ex);
-                            }
-
-                            sqlCache.add(sql);
-                        }
-
-                        if (sqlCache.size() < PAGE_SIZE) {
-                            break;
-                        }
-
-                        offset += PAGE_SIZE;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-        } catch (BatchUpdateException e) {
-            conexaoLocal.rollback();
-            handleBatchUpdateException(e, tabela);
-        } catch (SQLException e) {
-            conexaoLocal.rollback();
-            logPublisher.enviarLog("Erro durante a execução do lote: " + e);
-            throw e;
-        }
-
-        // Retornar o Map com todas as instruções SQL
-        return sqlCache;
-    }
-
-    // Método para tratar exceções de lote
-    private void handleBatchUpdateException(BatchUpdateException e, String tabela) {
-        logPublisher.enviarLog("Erro durante a execução do lote: " + e.getMessage());
-
-        SQLException nextException = e.getNextException();
-        while (nextException != null) {
-            if (nextException.getMessage().contains("duplicate key value violates unique constraint")) {
-                logPublisher.enviarLog("Erro: Chave duplicada detectada. Registro já existe na tabela " + tabela + ".");
-
-                throw new RuntimeException(
-                        "Erro: Chave duplicada detectada. Registro já existe na tabela " + tabela + ".");
-            } else {
-                logPublisher.enviarLog("Outro erro SQL: " + nextException.getMessage());
-                System.err.println("Outro erro SQL: " + nextException.getMessage());
-            }
-            nextException = nextException.getNextException();
-        }
-        logPublisher.enviarLog("Falha ao executar batch");
-
-        throw new RuntimeException("Falha ao executar batch", e);
-    }
-
+   
+  
 }
