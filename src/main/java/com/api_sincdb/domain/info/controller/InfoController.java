@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.api_sincdb.domain.info.model.SincronizacaoSchema;
 import com.api_sincdb.domain.info.repository.SincronizacaoSchemaRepository;
+import com.api_sincdb.domain.info.service.InfoService;
 import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.helper.JwtHelper;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
@@ -36,6 +37,9 @@ public class InfoController {
     private SincronizacaoSchemaService sincronizacaoSchemaService;
 
     @Autowired
+    private InfoService infoService;
+
+    @Autowired
     private JwtHelper jwtHelper;
 
     @GetMapping(value = "/atividade", produces = "application/json")
@@ -46,7 +50,24 @@ public class InfoController {
 
         List<SincronizacaoSchema> list = sincronizacaoSchemaService.listarPorUsuario(usuario);
 
-        return new ResponseEntity<>(list, HttpStatus.NOT_FOUND);
+        return new ResponseEntity<>(list, HttpStatus.OK);
+
+    }
+
+    @GetMapping(value = "/comparativo/bases", produces = "application/json")
+    public ResponseEntity<?> obterComparativoBase(HttpServletRequest request) throws InterruptedException {
+
+        Map<String, List<String>> list = infoService.compararBases();
+
+        return new ResponseEntity<>(list, HttpStatus.OK);
+
+    }
+    @GetMapping(value = "/comparativo/bases/{base}", produces = "application/json")
+    public ResponseEntity<?> obterComparativoEsquema(@PathVariable(value = "base") String base,HttpServletRequest request) throws InterruptedException {
+
+        Map<String, List<String>> list = infoService.compararSchemasDaBase(base);
+
+        return new ResponseEntity<>(list, HttpStatus.OK);
 
     }
 }
