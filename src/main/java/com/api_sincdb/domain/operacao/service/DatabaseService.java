@@ -1,9 +1,7 @@
 package com.api_sincdb.domain.operacao.service;
 
-import java.lang.reflect.InvocationTargetException;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -13,27 +11,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
-
-import javax.sql.DataSource;
-
-import org.jooq.DSLContext;
-import org.jooq.SQLDialect;
-import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.stereotype.Service;
-import org.springframework.web.bind.annotation.GetMapping;
-
 import com.api_sincdb.config.ConexaoBanco;
-import com.api_sincdb.domain.operacao.model.Coluna;
-import com.api_sincdb.domain.operacao.model.TipoSQLInfo;
 import com.api_sincdb.enums.TipoConexao;
-import com.api_sincdb.util.DicionarioTipoSql;
 import com.api_sincdb.util.Pair;
 import com.api_sincdb.util.UtilsSync;
 

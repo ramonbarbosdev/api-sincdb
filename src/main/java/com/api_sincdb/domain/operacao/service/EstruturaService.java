@@ -27,11 +27,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.domain.dashboard.service.SincronizacaoSchemaService;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
 import com.api_sincdb.enums.TipoConexao;
+import com.api_sincdb.enums.TipoOperacao;
+import com.api_sincdb.helper.EstruturaDadosUtils;
+import com.api_sincdb.helper.JwtHelper;
+import com.api_sincdb.util.ThreadUtils;
 import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
+
+import io.jsonwebtoken.JwtHandler;
+import org.apache.commons.lang3.tuple.Pair;
 
 @Service
 public class EstruturaService {
@@ -63,29 +71,52 @@ public class EstruturaService {
     @Autowired
     private LogPublisher logPublisher;
 
+    @Autowired
+    private SincronizacaoSchemaService sincronizacaoSchemaService;
+
+    @Autowired
+    private EstruturaDadosUtils estruturaDadosUtils;
+
+    @Autowired
+    private JwtHelper jwtHelper;
+
     // ================================================================
     // FUNCOES PRINCIPAIS
     // ================================================================
 
-    public Map<String, Object> verificarEstrutura(String token, String database, String esquema, String nomeTabela) {
+    public Map<String, Object> verificarEstrutura(String token, String database, String esquema, String nomeTabela)
+            throws Exception {
 
         Map<String, Object> response = new LinkedHashMap<>();
         List<EstruturaTabela> detalhes = new ArrayList<>();
 
-        try (Connection conexaoCloud = conexaoBanco.abrirConexao(database, TipoConexao.CLOUD, token);
-                Connection conexaoLocal = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, token)) {
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
-            Set<String> tabelasLocal = obterTabelas(conexaoLocal, database, nomeTabela);
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
-            Set<String> tabelasCloud = obterTabelas(conexaoCloud, database, nomeTabela);
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
+        String usuario = jwtHelper.extrairUsuario(token);
 
-            HashMap<String, List<String>> queries = (HashMap<String, List<String>>) processarTabelas(conexaoCloud,
-                    conexaoLocal, tabelasCloud,
-                    tabelasLocal, detalhes, database, esquema, nomeTabela);
+        Pair<Connection, Connection> conexoes = estruturaDadosUtils.abrirConexoes(database, token);
+        Connection cloud = conexoes.getLeft();
+        Connection local = conexoes.getRight();
+
+        try {
+
+            sincronizacaoSchemaService.iniciar(database, esquema, usuario,TipoOperacao.ESTRUTURA);
+
+            ThreadUtils.verificarCancelamento();
+            Set<String> tabelasLocal = obterTabelas(local, database, nomeTabela);
+
+            ThreadUtils.verificarCancelamento();
+            Set<String> tabelasCloud = obterTabelas(cloud, database, nomeTabela);
+
+            ThreadUtils.verificarCancelamento();
+
+            HashMap<String, List<String>> queries = (HashMap<String, List<String>>) processarTabelas(
+                    cloud,
+                    local,
+                    tabelasCloud,
+                    tabelasLocal,
+                    detalhes,
+                    database,
+                    esquema,
+                    nomeTabela);
 
             if (queries != null) {
                 cacheService.salvarCache(database + "_estrutura:", queries);
@@ -93,23 +124,43 @@ public class EstruturaService {
             }
 
             response.put("sucesso", true);
+
+            sincronizacaoSchemaService.marcarComoDesatualizado(database, esquema, usuario,
+                    "Scripts gerados para sincronização.",TipoOperacao.ESTRUTURA);
+
         } catch (InterruptedException e) {
-            utilsSync.tratarErroCancelamento(response, e);
-            Thread.currentThread().interrupt();
+            Thread.interrupted();
+            estruturaDadosUtils.finalizarCancelado(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
         } catch (SQLException e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
+
         } catch (Exception e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
+
+        } finally {
+
+            if (cloud != null)
+                cloud.close();
+            if (local != null)
+                local.close();
         }
 
         return response;
     }
 
-    public Map<String, Object> sincronizarEstrutura(String token, String database) {
+    public Map<String, Object> sincronizarEstrutura(String token, String database, String esquema) {
+
         Map<String, Object> response = new LinkedHashMap<>();
         List<Map<String, String>> detalhes = new ArrayList<>();
 
+        String usuario = jwtHelper.extrairUsuario(token);
+
         try (Connection conexaoLocal = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, token)) {
+
+            sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
+
             @SuppressWarnings("unchecked")
             HashMap<String, List<String>> querys = cacheService.buscarCache(database + "_estrutura:", HashMap.class);
 
@@ -117,6 +168,10 @@ public class EstruturaService {
                 response.put("sucesso", false);
                 response.put("message", "Nenhuma verificação foi feita previamente.");
                 logPublisher.enviarLog("Nenhuma verificação foi feita previamente.");
+
+                sincronizacaoSchemaService.finalizarErro(database,
+                        esquema, usuario, "Sincronização abortada: scripts não encontrados.", TipoOperacao.ESTRUTURA);
+
                 return response;
             }
 
@@ -131,11 +186,21 @@ public class EstruturaService {
             response.put("tabelas_afetadas", detalhes);
             response.put("errors", listaErro);
 
-        } catch (SQLException e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+            sincronizacaoSchemaService.finalizarSucesso(database,
+                    esquema, usuario,
+                    "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
+                    TipoOperacao.ESTRUTURA);
+
         } catch (Exception e) {
+
+            sincronizacaoSchemaService.finalizarErro(database,
+                    esquema,
+                    usuario,
+                    "Erro ao sincronizar scripts: " + e.getMessage(), TipoOperacao.ESTRUTURA);
+
             utilsSync.tratarErroSincronizacao(response, e);
         }
+
         return response;
     }
 
@@ -157,7 +222,6 @@ public class EstruturaService {
 
         Map<String, List<String>> infraBase = construirInfraestruturaBanco(
                 conexaoCloud, conexaoLocal, database, esquema, detalhes);
-
 
         Map<String, List<String>> tabelas = processarTabelasIndividuais(
                 conexaoCloud, conexaoLocal, tabelasCloud, tabelasLocal, detalhes, database);

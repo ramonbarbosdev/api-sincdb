@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -35,8 +36,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
 import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.domain.dashboard.service.SincronizacaoSchemaService;
+import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.TabelaDetalhe;
 import com.api_sincdb.enums.TipoConexao;
+import com.api_sincdb.enums.TipoOperacao;
+import com.api_sincdb.helper.EstruturaDadosUtils;
+import com.api_sincdb.helper.JwtHelper;
+import com.api_sincdb.util.ThreadUtils;
 import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
 
@@ -75,22 +82,40 @@ public class DadosService {
     @Autowired
     private AtualizarDadosService atualizarDadosService;
 
+    @Autowired
+    private SincronizacaoSchemaService sincronizacaoSchemaService;
+
+    @Autowired
+    private EstruturaDadosUtils estruturaDadosUtils;
+
+    @Autowired
+    private JwtHelper jwtHelper;
+
     // ================================================================
     // FUNCOES PRINCIPAIS
     // ================================================================
 
-    public Map<String, Object> verificarDados(String token, String database, String tabela) {
-        Map<String, Object> response = new HashMap<String, Object>();
+    public Map<String, Object> verificarDados(String token, String database, String esquema, String tabela)
+            throws Exception {
+
+        Map<String, Object> response = new LinkedHashMap<>();
         List<TabelaDetalhe> detalhes = new ArrayList<>();
 
-        try (Connection conexaoCloud = conexaoBanco.abrirConexao(database, TipoConexao.CLOUD, token);
-                Connection conexaoLocal = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, token)) {
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
-            HashMap<String, List<String>> querys = obterDadosTabela(database, conexaoCloud, conexaoLocal, tabela,
+        String usuario = jwtHelper.extrairUsuario(token);
+
+        Pair<Connection, Connection> conexoes = estruturaDadosUtils.abrirConexoes(database, token);
+        Connection cloud = conexoes.getLeft();
+        Connection local = conexoes.getRight();
+
+        try {
+
+            sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.DADOS);
+
+            ThreadUtils.verificarCancelamento();
+
+            HashMap<String, List<String>> querys = obterDadosTabela(database, cloud, local, tabela,
                     detalhes);
-            if (Thread.currentThread().isInterrupted())
-                throw new InterruptedException("Cancelado");
+            ThreadUtils.verificarCancelamento();
 
             if (querys != null) {
                 cacheService.salvarCache(database + "_dados:", querys);
@@ -98,24 +123,40 @@ public class DadosService {
             }
 
             response.put("sucesso", true);
+
+            sincronizacaoSchemaService.marcarComoDesatualizado(database, esquema, usuario,
+                    "Scripts gerados para sincronização.", TipoOperacao.DADOS);
+
         } catch (InterruptedException e) {
-            utilsSync.tratarErroCancelamento(response, e);
-            Thread.currentThread().interrupt();
+            Thread.interrupted();
+            estruturaDadosUtils.finalizarCancelado(database, esquema, usuario, response, e, TipoOperacao.DADOS);
         } catch (SQLException e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e, TipoOperacao.DADOS);
         } catch (Exception e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e, TipoOperacao.DADOS);
+        } finally {
+
+            if (cloud != null)
+                cloud.close();
+            if (local != null)
+                local.close();
         }
 
         return response;
     }
 
-    public Map<String, Object> sincronizarDados(String token, String database, String tabela, Boolean fl_verificacao) {
+    public Map<String, Object> sincronizarDados(String token, String database, String esquema, String tabela,
+            Boolean fl_verificacao) {
 
         Map<String, Object> response = new HashMap<String, Object>();
         List<Map<String, String>> detalhes = new ArrayList<>();
 
+        String usuario = jwtHelper.extrairUsuario(token);
+
         try (Connection conexaoLocal = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, token)) {
+
+            sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.DADOS);
+
             conexaoLocal.setAutoCommit(false);
 
             desativarConstraints(conexaoLocal);
@@ -147,9 +188,18 @@ public class DadosService {
 
             ativarConstraints(conexaoLocal);
 
-        } catch (SQLException e) {
-            utilsSync.tratarErroSincronizacao(response, e);
+            sincronizacaoSchemaService.finalizarSucesso(database,
+                    esquema, usuario,
+                    "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
+                    TipoOperacao.DADOS);
+
         } catch (Exception e) {
+
+            sincronizacaoSchemaService.finalizarErro(database,
+                    esquema,
+                    usuario,
+                    "Erro ao sincronizar scripts: " + e.getMessage(), TipoOperacao.DADOS);
+
             utilsSync.tratarErroSincronizacao(response, e);
         }
 
@@ -587,7 +637,7 @@ public class DadosService {
             logPublisher.enviarLog("Tabela não especificada.");
             throw new SQLException("Tabela não especificada.");
         }
-        
+
         String pkColumn = obterNomeColunaPK(conexaoCloud, tabela);
 
         if (pkColumn == null)

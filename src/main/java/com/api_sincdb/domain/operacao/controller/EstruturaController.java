@@ -45,8 +45,14 @@ public class EstruturaController {
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
 		processoManager.iniciarProcesso(() -> {
-			Map<String, Object> resultado = estruturaService.verificarEstrutura(token, base, esquema, null);
-			resultadoRef.set(resultado);
+			Map<String, Object> resultado;
+			try {
+				resultado = estruturaService.verificarEstrutura(token, base, esquema, null);
+				resultadoRef.set(resultado);
+
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
 		});
 
 		while (processoManager.isExecutando()) {
@@ -78,8 +84,15 @@ public class EstruturaController {
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
 		processoManager.iniciarProcesso(() -> {
-			Map<String, Object> resultado = estruturaService.verificarEstrutura(token, base, esquema, tabela);
-			resultadoRef.set(resultado);
+			Map<String, Object> resultado;
+			try {
+				resultado = estruturaService.verificarEstrutura(token, base, esquema, tabela);
+				resultadoRef.set(resultado);
+
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		});
 
 		while (processoManager.isExecutando()) {
@@ -107,12 +120,12 @@ public class EstruturaController {
 		return ResponseEntity.ok().build();
 	}
 
-	@GetMapping(value = "/{base}", produces = "application/json")
-	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base, HttpServletRequest request) {
+	@GetMapping(value = "/{base}/{esquema}", produces = "application/json")
+	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
 
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
-		Map<String, Object> resultado = estruturaService.sincronizarEstrutura(token, base);
+		Map<String, Object> resultado = estruturaService.sincronizarEstrutura(token, base, esquema);
 
 		if ((Boolean) resultado.get("sucesso")) {
 			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
