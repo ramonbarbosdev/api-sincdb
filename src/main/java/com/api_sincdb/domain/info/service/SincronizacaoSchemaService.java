@@ -1,4 +1,4 @@
-package com.api_sincdb.domain.dashboard.service;
+package com.api_sincdb.domain.info.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -9,8 +9,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
-import com.api_sincdb.domain.dashboard.model.SincronizacaoSchema;
-import com.api_sincdb.domain.dashboard.repository.SincronizacaoSchemaRepository;
+import com.api_sincdb.domain.info.model.SincronizacaoSchema;
+import com.api_sincdb.domain.info.repository.SincronizacaoSchemaRepository;
 import com.api_sincdb.enums.StatusSincronizacao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;

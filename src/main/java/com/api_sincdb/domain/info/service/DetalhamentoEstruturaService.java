@@ -1,4 +1,4 @@
-package com.api_sincdb.domain.dashboard.service;
+package com.api_sincdb.domain.info.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.pulsar.PulsarProperties.Defaults.SchemaInfo;

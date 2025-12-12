@@ -1,11 +1,11 @@
-package com.api_sincdb.domain.dashboard.repository;
+package com.api_sincdb.domain.info.repository;
 
 import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.mongodb.repository.MongoRepository;
 
-import com.api_sincdb.domain.dashboard.model.SincronizacaoSchema;
+import com.api_sincdb.domain.info.model.SincronizacaoSchema;
 import com.api_sincdb.enums.TipoOperacao;
 
 public interface SincronizacaoSchemaRepository extends MongoRepository<SincronizacaoSchema, String> {

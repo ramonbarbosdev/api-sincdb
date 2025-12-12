@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.api_sincdb.config.ConexaoBanco;
-import com.api_sincdb.domain.dashboard.service.SincronizacaoSchemaService;
+import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.util.UtilsSync;

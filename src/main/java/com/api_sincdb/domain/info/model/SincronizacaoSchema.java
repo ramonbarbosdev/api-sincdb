@@ -1,4 +1,4 @@
-package com.api_sincdb.domain.dashboard.model;
+package com.api_sincdb.domain.info.model;
 
 import java.time.LocalDateTime;
 import org.springframework.data.mongodb.core.mapping.Document;

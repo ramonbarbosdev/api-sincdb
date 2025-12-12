@@ -36,7 +36,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
 import com.api_sincdb.config.ConexaoBanco;
-import com.api_sincdb.domain.dashboard.service.SincronizacaoSchemaService;
+import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.TabelaDetalhe;
 import com.api_sincdb.enums.TipoConexao;

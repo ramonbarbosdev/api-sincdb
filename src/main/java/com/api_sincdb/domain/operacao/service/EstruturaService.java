@@ -27,7 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.config.ConexaoBanco;
-import com.api_sincdb.domain.dashboard.service.SincronizacaoSchemaService;
+import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
 import com.api_sincdb.enums.TipoConexao;
