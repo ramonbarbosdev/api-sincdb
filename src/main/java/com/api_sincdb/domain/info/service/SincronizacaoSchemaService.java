@@ -141,7 +141,6 @@ public class SincronizacaoSchemaService {
         return repository.findAllByUsuarioOrderByUltimaExecucaoDesc(usuario);
     }
 
-
     // -------------------------------------------------------
     // CRIAR OU RECUPERAR PROCESSO
     // -------------------------------------------------------
