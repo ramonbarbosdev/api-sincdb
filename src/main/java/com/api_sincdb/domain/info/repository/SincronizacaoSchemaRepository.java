@@ -12,5 +12,5 @@ public interface SincronizacaoSchemaRepository extends MongoRepository<Sincroniz
 
     Optional<SincronizacaoSchema> findByBaseNomeAndSchemaNomeAndUsuarioAndOperacao(String base, String schema, String usuario,TipoOperacao tipo);
 
-    List<SincronizacaoSchema> findAllByUsuario(String usuario);
+    List<SincronizacaoSchema> findAllByUsuarioOrderByUltimaExecucaoDesc(String usuario);
 }

@@ -138,7 +138,7 @@ public class SincronizacaoSchemaService {
     // LISTAR TODAS AS OPERAÇÕES DO USUÁRIO
     // -------------------------------------------------------
     public List<SincronizacaoSchema> listarPorUsuario(String usuario) {
-        return repository.findAllByUsuario(usuario);
+        return repository.findAllByUsuarioOrderByUltimaExecucaoDesc(usuario);
     }
 
 
