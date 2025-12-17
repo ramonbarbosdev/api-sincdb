@@ -38,8 +38,6 @@ public class AtualizarEstruturaService {
         Map<String, Coluna> estruturaCloud = obterEstruturaColunas(conexaoCloud, nomeTabela);
         Map<String, Coluna> estruturaLocal = obterEstruturaColunas(conexaoLocal, nomeTabela);
 
-
-        
         compararColunas(resultado, nomeTabela, estruturaCloud, estruturaLocal);
         compararColunasRemovidas(resultado, nomeTabela, estruturaCloud, estruturaLocal);
 
@@ -233,37 +231,46 @@ public class AtualizarEstruturaService {
         String tipoCloud = cloud.getTipo().toLowerCase();
         String tipoLocal = local.getTipo().toLowerCase();
 
-        // Se tiver tamanho: varchar(50), numeric(10,2)
-        if (tipoCloud.contains("(")) {
-
-            if (!tipoCloud.equals(tipoLocal)) {
-                // Tipos com tamanhos diferentes → ALTER TABLE
-                resultado.getColunasAlteradas().add(nomeColuna);
-
-                resultado.getAlteracoes().add(
-                        String.format("ALTER TABLE %s ALTER COLUMN %s TYPE %s;",
-                                nomeTabela, nomeColuna, tipoCloud));
-            }
-
+        if (tipoCloud.equals(tipoLocal)) {
             return;
         }
 
-        // Tipos sem tamanho
-        if (!tipoCloud.equals(tipoLocal)) {
+        resultado.getColunasAlteradas().add(nomeColuna);
 
-            String usingClause = "";
+        String usingClause = gerarUsing(nomeColuna, tipoCloud, tipoLocal);
 
-            if ((tipoCloud.equals("date") || tipoCloud.startsWith("timestamp"))
-                    && tipoLocal.contains("varchar")) {
-                usingClause = " USING " + nomeColuna + "::" + tipoCloud;
-            }
+        resultado.getAlteracoes().add(
+                String.format(
+                        "ALTER TABLE %s ALTER COLUMN %s TYPE %s%s;",
+                        nomeTabela,
+                        nomeColuna,
+                        tipoCloud,
+                        usingClause));
+    }
 
-            resultado.getColunasAlteradas().add(nomeColuna);
+    private String gerarUsing(String coluna, String tipoDestino, String tipoOrigem) {
 
-            resultado.getAlteracoes().add(
-                    String.format("ALTER TABLE %s ALTER COLUMN %s TYPE %s%s;",
-                            nomeTabela, nomeColuna, tipoCloud, usingClause));
+        if (tipoDestino.startsWith("int")) {
+            return " USING NULLIF(" + coluna + ", '')::integer";
         }
+
+        if (tipoDestino.startsWith("bigint")) {
+            return " USING NULLIF(" + coluna + ", '')::bigint";
+        }
+
+        if (tipoDestino.startsWith("numeric") || tipoDestino.startsWith("decimal")) {
+            return " USING NULLIF(" + coluna + ", '')::numeric";
+        }
+
+        if (tipoDestino.equals("date")) {
+            return " USING " + coluna + "::date";
+        }
+
+        if (tipoDestino.startsWith("timestamp")) {
+            return " USING " + coluna + "::timestamp";
+        }
+
+        return " USING " + coluna + "::" + tipoDestino;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -435,7 +442,6 @@ public class AtualizarEstruturaService {
             // 2. Para cada view dependente gerar DROP + CREATE
             for (String viewName : viewsDep) {
 
-               
                 // Extrair schema e nome da view
                 String schemaView = utilsSync.extrairSchema(viewName);
                 String nomeView = utilsSync.extrairTabela(viewName);
@@ -444,7 +450,7 @@ public class AtualizarEstruturaService {
                     continue; // pula objetos que não são VIEW
                 }
 
-                 // DROP VIEW
+                // DROP VIEW
                 dropViewsDependentes.add("DROP VIEW IF EXISTS " + viewName + ";");
 
                 String defView = obterDefinicaoView(conexaoCloud, schemaView, nomeView);
