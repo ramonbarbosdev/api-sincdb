@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.api_sincdb.domain.parametro.service.ParametroMasterService;
 import com.api_sincdb.websocket.LogPublisher;
 
 @Service
@@ -26,11 +27,29 @@ public class OperacaoBancoService {
     @Autowired
     private LogPublisher logPublisher;
 
+    @Autowired
+    private ParametroMasterService parametroService;
+
+    private boolean grupoEhCritico(String tipo) {
+        return switch (tipo) {
+            case "Schemas",
+                    "Criação de Tabelas",
+                    "Alterações",
+                    "Chaves Estrangeiras" ->
+                true;
+            default -> false;
+        };
+    }
+
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
             List<Map<String, String>> detalhes) throws IOException {
         try {
             int totalQueries = queries.values().stream().mapToInt(List::size).sum();
             AtomicInteger queriesExecutadas = new AtomicInteger(0);
+
+            Map<String, Object> parametros = parametroService.carregarParametros();
+            Boolean param = (Boolean) parametros.getOrDefault("PARAM_TOLERAR_ERROS_NAO_CRITICOS", false);
+            boolean tolerarErrosNaoCriticos = Boolean.TRUE.equals(param);
 
             conexao.setAutoCommit(false);
 
@@ -38,7 +57,17 @@ public class OperacaoBancoService {
                 String tipo = grupo.getKey();
                 List<String> listaQueries = grupo.getValue();
 
-                executarGrupoDeQueries(conexao, tipo, listaQueries, detalhes, totalQueries, queriesExecutadas);
+                boolean continuarEmErro = tolerarErrosNaoCriticos && !grupoEhCritico(tipo);
+
+                executarGrupoDeQueries(
+                        conexao,
+                        tipo,
+                        listaQueries,
+                        detalhes,
+                        totalQueries,
+                        queriesExecutadas,
+                        continuarEmErro);
+
                 conexao.commit();
 
             }
@@ -71,7 +100,8 @@ public class OperacaoBancoService {
             List<String> queries,
             List<Map<String, String>> detalhes,
             int totalQueries,
-            AtomicInteger queriesExecutadas) throws SQLException, IOException {
+            AtomicInteger queriesExecutadas,
+            boolean continuarEmErro) throws SQLException, IOException {
 
         if (queries == null || queries.isEmpty())
             return;
@@ -102,6 +132,9 @@ public class OperacaoBancoService {
                 stmt.execute(query);
             } catch (SQLException e) {
 
+                logPublisher.enviarLog("ERRO AO EXECUTAR QUERY (" + tipo + "):");
+                logPublisher.enviarLog(query);
+
                 Map<String, String> criarDetalhe = new LinkedHashMap<>();
                 criarDetalhe.put("tabela", tabela);
                 criarDetalhe.put("acao", tipo);
@@ -110,7 +143,11 @@ public class OperacaoBancoService {
 
                 logPublisher.enviarLog(e.getMessage() + " | SQLState: " + e.getSQLState());
 
-                throw e;
+                if (!continuarEmErro) {
+                    throw e;
+                }
+
+                continue;
             }
         }
     }

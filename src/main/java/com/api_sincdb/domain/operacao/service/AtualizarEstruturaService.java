@@ -38,6 +38,8 @@ public class AtualizarEstruturaService {
         Map<String, Coluna> estruturaCloud = obterEstruturaColunas(conexaoCloud, nomeTabela);
         Map<String, Coluna> estruturaLocal = obterEstruturaColunas(conexaoLocal, nomeTabela);
 
+
+        
         compararColunas(resultado, nomeTabela, estruturaCloud, estruturaLocal);
         compararColunasRemovidas(resultado, nomeTabela, estruturaCloud, estruturaLocal);
 
