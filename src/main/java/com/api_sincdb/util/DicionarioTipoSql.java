@@ -6,7 +6,6 @@ import java.util.Map;
 
 import com.api_sincdb.domain.operacao.model.TipoSQLInfo;
 
-
 public class DicionarioTipoSql {
 
     private static final Map<String, TipoSQLInfo> tipos = new HashMap<>();
@@ -33,9 +32,10 @@ public class DicionarioTipoSql {
         // tipos inválidos ou exagerados podem ser tratados assim
         tipos.put("CLOB", new TipoSQLInfo("text", false, false)); // evita varchar gigante
         tipos.put("LONGVARCHAR", new TipoSQLInfo("text", false, false));
-
         tipos.put("BIGSERIAL", new TipoSQLInfo("bigint", false, false));
-        tipos.put("SERIAL", new TipoSQLInfo("serial", false, false));
+        tipos.put("SERIAL", new TipoSQLInfo("integer", false, false));
+        tipos.put("INT4", new TipoSQLInfo("integer", false, false));
+        tipos.put("INT8", new TipoSQLInfo("bigint", false, false));
     }
 
     public static TipoSQLInfo getTipo(String tipoOriginal) {

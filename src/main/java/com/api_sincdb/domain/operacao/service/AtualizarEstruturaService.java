@@ -142,6 +142,7 @@ public class AtualizarEstruturaService {
                 coluna.setDefaultValor(colunas.getString("COLUMN_DEF"));
 
                 String tipoOriginal = colunas.getString("TYPE_NAME").toLowerCase();
+
                 TipoSQLInfo tipoInfo = DicionarioTipoSql.getTipo(tipoOriginal);
                 coluna.setTipo(tipoInfo.getTipo());
 
