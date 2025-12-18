@@ -34,6 +34,7 @@ import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.helper.EstruturaDadosUtils;
 import com.api_sincdb.helper.JwtHelper;
+import com.api_sincdb.util.MontarEstruturaResponseUtils;
 import com.api_sincdb.util.ThreadUtils;
 import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
@@ -66,7 +67,7 @@ public class EstruturaService {
     private ConexaoBanco conexaoBanco;
 
     @Autowired
-    private CriacaoTabelaService criacaoTabelaService;
+    private CriacaoTabelaEstruturaService criacaoTabelaService;
 
     @Autowired
     private LogPublisher logPublisher;
@@ -98,7 +99,7 @@ public class EstruturaService {
 
         try {
 
-            sincronizacaoSchemaService.iniciar(database, esquema, usuario,TipoOperacao.ESTRUTURA);
+            sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
 
             ThreadUtils.verificarCancelamento();
             Set<String> tabelasLocal = obterTabelas(local, database, nomeTabela);
@@ -119,25 +120,28 @@ public class EstruturaService {
                     nomeTabela);
 
             if (queries != null) {
+
                 cacheService.salvarCache(database + "_estrutura:", queries);
-                response.put("tabelas_afetadas", detalhes);
+                Map<String, List<EstruturaTabela>> categorias = MontarEstruturaResponseUtils.montarDetalhesPorCategoria(queries);
+
+                response.putAll(categorias);
             }
 
             response.put("sucesso", true);
 
             sincronizacaoSchemaService.marcarComoDesatualizado(database, esquema, usuario,
-                    "Scripts gerados para sincronização.",TipoOperacao.ESTRUTURA);
+                    "Scripts gerados para sincronização.", TipoOperacao.ESTRUTURA);
 
         } catch (InterruptedException e) {
             Thread.interrupted();
-            estruturaDadosUtils.finalizarCancelado(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
+            estruturaDadosUtils.finalizarCancelado(database, esquema, usuario, response, e, TipoOperacao.ESTRUTURA);
         } catch (SQLException e) {
 
-            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e, TipoOperacao.ESTRUTURA);
 
         } catch (Exception e) {
 
-            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e,TipoOperacao.ESTRUTURA);
+            estruturaDadosUtils.finalizarErro(database, esquema, usuario, response, e, TipoOperacao.ESTRUTURA);
 
         } finally {
 
@@ -341,7 +345,7 @@ public class EstruturaService {
                 }
 
                 // Criar tabela
-                String create = criacaoTabelaService.criarEstuturaTabela(conexaoCloud, tabela);
+                String create = criacaoTabelaService.criarEstruturaTabela(conexaoCloud, tabela);
                 if (create != null && !create.isBlank()) {
                     criacoesTabela.add(create);
                     detalhes.add(new EstruturaTabela(tabela, "Criação"));

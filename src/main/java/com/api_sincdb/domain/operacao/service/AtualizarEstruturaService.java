@@ -98,7 +98,6 @@ public class AtualizarEstruturaService {
         if (!views.isEmpty())
             return dedupe(views);
 
-        // 3) Fallback textual: procurar o nome da coluna (ILIKE) nas definições das
         // views
         String sql3 = """
                     SELECT schemaname, viewname
@@ -442,22 +441,37 @@ public class AtualizarEstruturaService {
             // 2. Para cada view dependente gerar DROP + CREATE
             for (String viewName : viewsDep) {
 
-                // Extrair schema e nome da view
                 String schemaView = utilsSync.extrairSchema(viewName);
                 String nomeView = utilsSync.extrairTabela(viewName);
 
                 if (!isView(conexaoCloud, schemaView, nomeView)) {
-                    continue; // pula objetos que não são VIEW
+                    continue;
+                }
+
+                if (viewName.contains("public.registro_credito_operacionalidade_view")) {
+                    System.out.println(viewName);
                 }
 
                 // DROP VIEW
-                dropViewsDependentes.add("DROP VIEW IF EXISTS " + viewName + ";");
+                dropViewsDependentes.add(
+                        "DROP VIEW IF EXISTS " + viewName + " CASCADE;");
 
                 String defView = obterDefinicaoView(conexaoCloud, schemaView, nomeView);
 
+                if (defView == null || defView.isBlank()) {
+                    System.out.println(
+                            "⚠ View ignorada (definição nula): " + viewName);
+                    continue;
+                }
+
+                defView = defView.trim();
+
                 // CREATE VIEW
                 createViewsDependentes.add(
-                        "CREATE OR REPLACE VIEW " + viewName + " AS " + defView + ";");
+                        """
+                                CREATE OR REPLACE VIEW %s AS
+                                %s;
+                                """.formatted(viewName, defView));
             }
         }
     }

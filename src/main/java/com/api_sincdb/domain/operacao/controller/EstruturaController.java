@@ -1,5 +1,6 @@
 package com.api_sincdb.domain.operacao.controller;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +15,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.api_sincdb.domain.operacao.dto.EstruturaResponse;
 import com.api_sincdb.domain.operacao.service.EstruturaService;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
+import com.api_sincdb.util.MontarEstruturaResponseUtils;
 import com.api_sincdb.util.ProcessoManager;
 import com.api_sincdb.websocket.LogPublisher;
 
@@ -40,6 +43,7 @@ public class EstruturaController {
 	@GetMapping(value = "/verificar/{base}/{esquema}", produces = "application/json")
 	public ResponseEntity<?> verificarEstrutura(@PathVariable(value = "base") String base,
 			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) throws InterruptedException {
+
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
@@ -65,11 +69,12 @@ public class EstruturaController {
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
+		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base, esquema);
 
 		if (Boolean.TRUE.equals(resultado.get("sucesso")))
-			return new ResponseEntity<>(resultado, HttpStatus.OK);
+			return new ResponseEntity<>(response, HttpStatus.OK);
 
-		return new ResponseEntity<>(resultado, HttpStatus.NOT_FOUND);
+		return new ResponseEntity<>(response, HttpStatus.NOT_FOUND);
 
 	}
 
@@ -105,11 +110,12 @@ public class EstruturaController {
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
+		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base, esquema);
 
 		if (Boolean.TRUE.equals(resultado.get("sucesso")))
-			return new ResponseEntity<>(resultado, HttpStatus.OK);
+			return new ResponseEntity<>(response, HttpStatus.OK);
 
-		return new ResponseEntity<>(resultado, HttpStatus.NOT_FOUND);
+		return new ResponseEntity<>(response, HttpStatus.NOT_FOUND);
 
 	}
 
@@ -121,7 +127,8 @@ public class EstruturaController {
 	}
 
 	@GetMapping(value = "/{base}/{esquema}", produces = "application/json")
-	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
+	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,
+			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
 
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 

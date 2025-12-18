@@ -343,26 +343,53 @@ public class DatabaseService {
         return scripts;
     }
 
-    public List<String> gerarScriptsViews(Connection conexaoCloud, Connection conexaoLocal, String esquema)
-            throws SQLException {
+    public List<String> gerarScriptsViews(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String esquema) throws SQLException {
+
         List<String> scripts = new ArrayList<>();
 
-        // Obtenha views do banco origem (cloud)
-        String sqlViewsCloud = "SELECT table_name, view_definition FROM information_schema.views WHERE table_schema = ?";
-        PreparedStatement stmtCloud = conexaoCloud.prepareStatement(sqlViewsCloud);
-        stmtCloud.setString(1, esquema);
-        ResultSet rsCloud = stmtCloud.executeQuery();
+        String sql = """
+                SELECT
+                    c.relname AS view_name,
+                    pg_get_viewdef(c.oid, true) AS view_definition
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind = 'v'
+                  AND n.nspname = ?
+                ORDER BY c.relname
+                """;
 
-        while (rsCloud.next()) {
-            String viewName = rsCloud.getString("table_name");
-            String viewDefinition = rsCloud.getString("view_definition");
+        try (PreparedStatement ps = conexaoCloud.prepareStatement(sql)) {
+            ps.setString(1, esquema);
 
-            // Aqui você pode verificar se essa view já existe no local, ou simplesmente
-            // gerar o script
-            String script = String.format("DROP VIEW IF EXISTS %s.%s CASCADE;\nCREATE VIEW %s.%s AS %s;",
-                    esquema, viewName, esquema, viewName, viewDefinition);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String viewName = rs.getString("view_name");
+                    String defView = rs.getString("view_definition");
 
-            scripts.add(script);
+                    if (defView == null || defView.isBlank()) {
+                        System.out.println("⚠ View ignorada (definição nula): " + esquema + "." + viewName);
+                        continue;
+                    }
+
+                    defView = defView.trim();
+
+                    if (!defView.regionMatches(true, 0, "select", 0, 6)) {
+                        System.out.println("⚠ View ignorada (SQL inválido): " + esquema + "." + viewName);
+                        continue;
+                    }
+
+                    String script = """
+                            DROP VIEW IF EXISTS %s.%s CASCADE;
+                            CREATE VIEW %s.%s AS
+                            %s;
+                            """.formatted(esquema, viewName, esquema, viewName, defView);
+
+                    scripts.add(script);
+                }
+            }
         }
 
         return scripts;

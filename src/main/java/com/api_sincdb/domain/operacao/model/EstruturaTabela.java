@@ -1,5 +1,7 @@
 package com.api_sincdb.domain.operacao.model;
 
+
+
 public class EstruturaTabela
 {
     private String tabela;
