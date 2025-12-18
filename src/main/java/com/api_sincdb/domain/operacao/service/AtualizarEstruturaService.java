@@ -27,10 +27,12 @@ public class AtualizarEstruturaService {
     @Autowired
     private UtilsSync utilsSync;
 
-    // ---------------------------------------------------------------------------------------------
-    // Entrada principal do serviço: VERIFICAÇÃO COMPLETA DA TABELA
-    // ---------------------------------------------------------------------------------------------
-    public ResultadoComparacao compararEstruturaTabela(Connection conexaoCloud, Connection conexaoLocal,
+    // =========================================================
+    // ENTRADA PRINCIPAL
+    // =========================================================
+    public ResultadoComparacao compararEstruturaTabela(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
             String nomeTabela) throws SQLException {
 
         ResultadoComparacao resultado = new ResultadoComparacao();
@@ -44,9 +46,334 @@ public class AtualizarEstruturaService {
         return resultado;
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // BUSCA VIEWS DEPENDENTES (usado no processarTabelas)
-    // ---------------------------------------------------------------------------------------------
+    // =========================================================
+    // OBTÉM ESTRUTURA DAS COLUNAS (PONTO CRÍTICO)
+    // =========================================================
+    private Map<String, Coluna> obterEstruturaColunas(
+            Connection conexao,
+            String nomeTabela) throws SQLException {
+
+        Map<String, Coluna> estrutura = new HashMap<>();
+        DatabaseMetaData metaData = conexao.getMetaData();
+
+        String schema = utilsSync.extrairSchema(nomeTabela);
+        String tabela = utilsSync.extrairTabela(nomeTabela);
+
+        try (ResultSet colunas = metaData.getColumns(null, schema, tabela, null)) {
+
+            while (colunas.next()) {
+
+                Coluna coluna = new Coluna();
+                coluna.setNome(colunas.getString("COLUMN_NAME"));
+                coluna.setNullable(
+                        colunas.getInt("NULLABLE") == DatabaseMetaData.columnNullable);
+
+                String defaultValor = colunas.getString("COLUMN_DEF");
+                coluna.setDefaultValor(defaultValor);
+
+                String tipoOriginal = colunas.getString("TYPE_NAME").toLowerCase();
+
+                // SERIAL NÃO É TIPO
+                if (tipoOriginal.startsWith("serial")) {
+                    tipoOriginal = "integer";
+                }
+
+                // DETECTA AUTO-INCREMENTO (serial / identity)
+                boolean autoIncrement = defaultValor != null &&
+                        defaultValor.toLowerCase().startsWith("nextval(");
+
+                coluna.setAutoIncrement(autoIncrement);
+
+                TipoSQLInfo tipoInfo = DicionarioTipoSql.getTipo(tipoOriginal);
+                coluna.setTipo(tipoInfo.getTipo());
+
+                estrutura.put(coluna.getNome(), coluna);
+            }
+        }
+
+        return estrutura;
+    }
+
+    // =========================================================
+    // COMPARAÇÃO DE COLUNAS
+    // =========================================================
+    private void compararColunas(
+            ResultadoComparacao resultado,
+            String nomeTabela,
+            Map<String, Coluna> cloud,
+            Map<String, Coluna> local) {
+
+        cloud.forEach((nomeColuna, colunaCloud) -> {
+
+            Coluna colunaLocal = local.get(nomeColuna);
+
+            // -------------------------------
+            // COLUNA NOVA
+            // -------------------------------
+            if (colunaLocal == null) {
+
+                resultado.getColunasNovas().add(nomeColuna);
+                resultado.getColunasAlteradas().add(nomeColuna);
+
+                resultado.getAlteracoes().add(
+                        String.format(
+                                "ALTER TABLE %s ADD COLUMN %s %s;",
+                                nomeTabela,
+                                nomeColuna,
+                                colunaCloud.getTipo()));
+
+                if (!colunaCloud.isNullable()) {
+                    resultado.getAlteracoes().add(
+                            String.format(
+                                    "ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;",
+                                    nomeTabela,
+                                    nomeColuna));
+                }
+
+                if (!colunaCloud.isAutoIncrement()
+                        && colunaCloud.getDefaultValor() != null) {
+
+                    resultado.getAlteracoes().add(
+                            String.format(
+                                    "ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;",
+                                    nomeTabela,
+                                    nomeColuna,
+                                    colunaCloud.getDefaultValor()));
+                }
+
+                return;
+            }
+
+            compararTipoColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
+            compararNullableColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
+            compararDefaultColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
+        });
+    }
+
+    // =========================================================
+    // COMPARA TIPO
+    // =========================================================
+    private void compararTipoColuna(
+            ResultadoComparacao resultado,
+            String nomeTabela,
+            String nomeColuna,
+            Coluna cloud,
+            Coluna local) {
+
+        // AUTO-INCREMENTO NÃO ALTERA TIPO
+        if (cloud.isAutoIncrement() || local.isAutoIncrement()) {
+            return;
+        }
+
+        if (cloud.getTipo().equalsIgnoreCase(local.getTipo())) {
+            return;
+        }
+
+        resultado.getColunasAlteradas().add(nomeColuna);
+
+        resultado.getAlteracoes().add(
+                String.format(
+                        "ALTER TABLE %s ALTER COLUMN %s TYPE %s USING %s::%s;",
+                        nomeTabela,
+                        nomeColuna,
+                        cloud.getTipo(),
+                        nomeColuna,
+                        cloud.getTipo()));
+    }
+
+    // =========================================================
+    // COMPARA NULLABLE
+    // =========================================================
+    private void compararNullableColuna(
+            ResultadoComparacao resultado,
+            String nomeTabela,
+            String nomeColuna,
+            Coluna cloud,
+            Coluna local) {
+
+        if (cloud.isNullable() != local.isNullable()) {
+
+            resultado.getColunasAlteradas().add(nomeColuna);
+
+            resultado.getAlteracoes().add(
+                    String.format(
+                            "ALTER TABLE %s ALTER COLUMN %s %s NOT NULL;",
+                            nomeTabela,
+                            nomeColuna,
+                            cloud.isNullable() ? "DROP" : "SET"));
+        }
+    }
+
+    // =========================================================
+    // COMPARA DEFAULT (PONTO DO ERRO ORIGINAL)
+    // =========================================================
+    private void compararDefaultColuna(
+            ResultadoComparacao resultado,
+            String nomeTabela,
+            String nomeColuna,
+            Coluna cloud,
+            Coluna local) {
+
+        // DEFAULT NÃO SE APLICA A SERIAL / IDENTITY
+        if (cloud.isAutoIncrement() || local.isAutoIncrement()) {
+            return;
+        }
+
+        if (Objects.equals(cloud.getDefaultValor(), local.getDefaultValor())) {
+            return;
+        }
+
+        resultado.getColunasAlteradas().add(nomeColuna);
+
+        if (cloud.getDefaultValor() == null) {
+            resultado.getAlteracoes().add(
+                    String.format(
+                            "ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;",
+                            nomeTabela,
+                            nomeColuna));
+        } else {
+            resultado.getAlteracoes().add(
+                    String.format(
+                            "ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;",
+                            nomeTabela,
+                            nomeColuna,
+                            cloud.getDefaultValor()));
+        }
+    }
+
+    // =========================================================
+    // COLUNAS REMOVIDAS
+    // =========================================================
+    private void compararColunasRemovidas(
+            ResultadoComparacao resultado,
+            String tabela,
+            Map<String, Coluna> cloud,
+            Map<String, Coluna> local) {
+
+        for (String colLocal : local.keySet()) {
+            if (!cloud.containsKey(colLocal)) {
+
+                resultado.getColunasRemovidas().add(colLocal);
+                resultado.getColunasAlteradas().add(colLocal);
+
+                resultado.getAlteracoes().add(
+                        "ALTER TABLE " + tabela + " DROP COLUMN " + colLocal + ";");
+            }
+        }
+    }
+
+    // =========================================================
+    // GERAR OS SCRIPTS DE VIEWS QUE SAO DEPENDENTES
+    // =========================================================
+    public void gerarScriptsViewsDependentes(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String nomeTabela,
+            ResultadoComparacao resultado,
+            List<String> dropViewsDependentes,
+            List<String> createViewsDependentes) throws SQLException {
+
+        String schemaTabela = utilsSync.extrairSchema(nomeTabela);
+        String tabela = utilsSync.extrairTabela(nomeTabela);
+
+        for (String colunaAlterada : resultado.getColunasAlteradas()) {
+
+            // 1. Buscar se existem views dependentes desta coluna
+            List<String> viewsDep = buscarViewsDependentes(
+                    conexaoLocal,
+                    schemaTabela,
+                    tabela,
+                    colunaAlterada);
+
+            // 2. Para cada view dependente gerar DROP + CREATE
+            for (String viewName : viewsDep) {
+
+                String schemaView = utilsSync.extrairSchema(viewName);
+                String nomeView = utilsSync.extrairTabela(viewName);
+
+                if (!isView(conexaoCloud, schemaView, nomeView)) {
+                    continue;
+                }
+
+                if (viewName.contains("public.registro_credito_operacionalidade_view")) {
+                    System.out.println(viewName);
+                }
+
+                // DROP VIEW
+                dropViewsDependentes.add(
+                        "DROP VIEW IF EXISTS " + viewName + " CASCADE;");
+
+                String defView = obterDefinicaoView(conexaoCloud, schemaView, nomeView);
+
+                if (defView == null || defView.isBlank()) {
+                    System.out.println(
+                            "⚠ View ignorada (definição nula): " + viewName);
+                    continue;
+                }
+
+                defView = defView.trim();
+
+                // CREATE VIEW
+                createViewsDependentes.add(
+                        """
+                                CREATE OR REPLACE VIEW %s AS
+                                %s;
+                                """.formatted(viewName, defView));
+            }
+        }
+    }
+
+    // =========================================================
+    // FUNCOEES AUXILIARES
+    // =========================================================
+    public boolean isView(Connection conn, String schema, String viewName) throws SQLException {
+        // Ignore catálogos internos
+        if (schema.equalsIgnoreCase("pg_catalog") ||
+                schema.equalsIgnoreCase("information_schema") ||
+                schema.startsWith("pg_") ||
+                viewName.startsWith("pg_")) {
+            return false;
+        }
+
+        String sql = """
+                    SELECT COUNT(*)
+                    FROM information_schema.views
+                    WHERE table_schema = ?
+                      AND table_name = ?
+                """;
+
+        try (PreparedStatement pst = conn.prepareStatement(sql)) {
+            pst.setString(1, schema);
+            pst.setString(2, viewName);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next())
+                    return rs.getInt(1) > 0;
+            }
+        }
+        return false;
+    }
+
+    public String obterDefinicaoView(Connection conexao, String schema, String viewName) throws SQLException {
+
+        String sql = """
+                    SELECT pg_get_viewdef(format('%I.%I', ?, ?)::regclass, true) AS view_definition
+                """;
+
+        try (PreparedStatement pst = conexao.prepareStatement(sql)) {
+            pst.setString(1, schema);
+            pst.setString(2, viewName);
+
+            try (ResultSet rs = pst.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("view_definition");
+                }
+            }
+        }
+
+        return null;
+    }
+
     public List<String> buscarViewsDependentes(Connection conexao, String schemaTabela, String nomeTabela,
             String nomeColuna)
             throws SQLException {
@@ -120,389 +447,6 @@ public class AtualizarEstruturaService {
     private List<String> dedupe(List<String> list) {
         LinkedHashSet<String> set = new LinkedHashSet<>(list);
         return new ArrayList<>(set);
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // BUSCA COLUNAS DO BANCO PARA MONTAR O MAPA DE ESTRUTURA
-    // ---------------------------------------------------------------------------------------------
-    private Map<String, Coluna> obterEstruturaColunas(Connection conexao, String nomeTabela) throws SQLException {
-
-        Map<String, Coluna> estrutura = new HashMap<>();
-        DatabaseMetaData metaData = conexao.getMetaData();
-
-        String schema = utilsSync.extrairSchema(nomeTabela);
-        String tabela = utilsSync.extrairTabela(nomeTabela);
-
-        try (ResultSet colunas = metaData.getColumns(null, schema, tabela, null)) {
-
-            while (colunas.next()) {
-                Coluna coluna = new Coluna();
-                coluna.setNome(colunas.getString("COLUMN_NAME"));
-                coluna.setNullable(colunas.getInt("NULLABLE") == DatabaseMetaData.columnNullable);
-                coluna.setDefaultValor(colunas.getString("COLUMN_DEF"));
-
-                String tipoOriginal = colunas.getString("TYPE_NAME").toLowerCase();
-
-                TipoSQLInfo tipoInfo = DicionarioTipoSql.getTipo(tipoOriginal);
-                coluna.setTipo(tipoInfo.getTipo());
-
-                estrutura.put(coluna.getNome(), coluna);
-            }
-        }
-
-        return estrutura;
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // COMPARAR COLUNAS E GERAR ALTERAÇÕES
-    // ---------------------------------------------------------------------------------------------
-    private void compararColunas(ResultadoComparacao resultado,
-            String nomeTabela,
-            Map<String, Coluna> cloud,
-            Map<String, Coluna> local) {
-
-        cloud.forEach((nomeColuna, colunaCloud) -> {
-
-            Coluna colunaLocal = local.get(nomeColuna);
-
-            // ----------------------------------------------------------
-            // COLUNA NOVA
-            // ----------------------------------------------------------
-            if (colunaLocal == null) {
-
-                resultado.getColunasNovas().add(nomeColuna);
-                resultado.getColunasAlteradas().add(nomeColuna);
-
-                boolean flAnulavel = colunaCloud.isNullable();
-                String tipo = colunaCloud.getTipo();
-                String defaultValor = colunaCloud.getDefaultValor();
-
-                if (!flAnulavel && defaultValor == null) {
-                    defaultValor = obterValorDefault(tipo);
-                }
-
-                resultado.getAlteracoes()
-                        .add(String.format("ALTER TABLE %s ADD COLUMN %s %s;",
-                                nomeTabela, nomeColuna, tipo));
-
-                if (!flAnulavel) {
-                    String valorSeguro = obterValorDefaultSeguro(tipo);
-
-                    resultado.getAlteracoes()
-                            .add(String.format("UPDATE %s SET %s = %s WHERE %s IS NULL;",
-                                    nomeTabela, nomeColuna, valorSeguro, nomeColuna));
-
-                    resultado.getAlteracoes()
-                            .add(String.format("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;",
-                                    nomeTabela, nomeColuna));
-                }
-
-                if (defaultValor != null) {
-                    if (!defaultValor.startsWith("'") && !defaultValor.endsWith("'")
-                            && (tipo.equals("varchar") || tipo.equals("text"))) {
-                        defaultValor = "'" + defaultValor.replace("'", "''") + "'";
-                    }
-
-                    resultado.getAlteracoes()
-                            .add(String.format("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;",
-                                    nomeTabela, nomeColuna, defaultValor));
-                }
-
-                return; // segue para próxima coluna
-            }
-
-            // ----------------------------------------------------------
-            // COLUNA JÁ EXISTE — COMPARAR
-            // ----------------------------------------------------------
-            compararTipoColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
-            compararNullableColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
-            compararDefaultColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
-        });
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    private void compararTipoColuna(
-            ResultadoComparacao resultado,
-            String nomeTabela,
-            String nomeColuna,
-            Coluna cloud,
-            Coluna local) {
-
-        String tipoCloud = cloud.getTipo().toLowerCase();
-        String tipoLocal = local.getTipo().toLowerCase();
-
-        if (tipoCloud.equals(tipoLocal)) {
-            return;
-        }
-
-        resultado.getColunasAlteradas().add(nomeColuna);
-
-        String usingClause = gerarUsing(nomeColuna, tipoCloud, tipoLocal);
-
-        resultado.getAlteracoes().add(
-                String.format(
-                        "ALTER TABLE %s ALTER COLUMN %s TYPE %s%s;",
-                        nomeTabela,
-                        nomeColuna,
-                        tipoCloud,
-                        usingClause));
-    }
-
-    private String gerarUsing(String coluna, String tipoDestino, String tipoOrigem) {
-
-        if (tipoDestino.startsWith("int")) {
-            return " USING NULLIF(" + coluna + ", '')::integer";
-        }
-
-        if (tipoDestino.startsWith("bigint")) {
-            return " USING NULLIF(" + coluna + ", '')::bigint";
-        }
-
-        if (tipoDestino.startsWith("numeric") || tipoDestino.startsWith("decimal")) {
-            return " USING NULLIF(" + coluna + ", '')::numeric";
-        }
-
-        if (tipoDestino.equals("date")) {
-            return " USING " + coluna + "::date";
-        }
-
-        if (tipoDestino.startsWith("timestamp")) {
-            return " USING " + coluna + "::timestamp";
-        }
-
-        return " USING " + coluna + "::" + tipoDestino;
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    private void compararNullableColuna(ResultadoComparacao resultado,
-            String nomeTabela,
-            String nomeColuna,
-            Coluna cloud,
-            Coluna local) {
-
-        if (cloud.isNullable() != local.isNullable()) {
-
-            resultado.getAlteracoes()
-                    .add(String.format(
-                            "ALTER TABLE %s ALTER COLUMN %s %s NOT NULL;",
-                            nomeTabela,
-                            nomeColuna,
-                            cloud.isNullable() ? "DROP" : "SET"));
-
-            resultado.getColunasAlteradas().add(nomeColuna);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    private void compararDefaultColuna(ResultadoComparacao resultado,
-            String nomeTabela,
-            String nomeColuna,
-            Coluna cloud,
-            Coluna local) {
-
-        if (!Objects.equals(cloud.getDefaultValor(), local.getDefaultValor())) {
-
-            if (cloud.getDefaultValor() == null) {
-                resultado.getAlteracoes()
-                        .add(String.format("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;",
-                                nomeTabela, nomeColuna));
-            } else {
-
-                String defaultVal = cloud.getDefaultValor();
-
-                if (cloud.getTipo().toLowerCase().contains("char")
-                        || cloud.getTipo().equalsIgnoreCase("text")) {
-
-                    if (!(defaultVal.startsWith("'") && defaultVal.endsWith("'"))) {
-                        defaultVal = "'" + defaultVal.replace("'", "''") + "'";
-                    }
-                }
-
-                resultado.getAlteracoes()
-                        .add(String.format("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;",
-                                nomeTabela, nomeColuna, defaultVal));
-            }
-
-            resultado.getColunasAlteradas().add(nomeColuna);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    void compararColunasRemovidas(ResultadoComparacao resultado,
-            String tabela,
-            Map<String, Coluna> cloud,
-            Map<String, Coluna> local) {
-
-        for (String colLocal : local.keySet()) {
-            if (!cloud.containsKey(colLocal)) {
-
-                resultado.getColunasRemovidas().add(colLocal);
-                resultado.getColunasAlteradas().add(colLocal);
-
-                resultado.getAlteracoes()
-                        .add("ALTER TABLE " + tabela + " DROP COLUMN " + colLocal + ";");
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // VALORES DEFAULT INTERNOS
-    // ---------------------------------------------------------------------------------------------
-    private String obterValorDefault(String tipo) {
-        switch (tipo.toLowerCase()) {
-            case "boolean":
-            case "bool":
-                return "false";
-            case "int":
-            case "integer":
-            case "bigint":
-            case "smallint":
-                return "0";
-            case "numeric":
-            case "decimal":
-            case "float":
-            case "double":
-                return "0.0";
-            case "timestamp":
-            case "timestamptz":
-                return "'1970-01-01 00:00:00'";
-            case "date":
-                return "'1970-01-01'";
-            case "text":
-            case "varchar":
-            case "char":
-                return "''";
-            default:
-                return "null";
-        }
-    }
-
-    private String obterValorDefaultSeguro(String tipo) {
-        tipo = tipo.toLowerCase();
-
-        if (tipo.contains("int"))
-            return "0";
-        if (tipo.contains("char") || tipo.contains("text"))
-            return "''";
-        if (tipo.contains("bool"))
-            return "false";
-        if (tipo.contains("date"))
-            return "'1970-01-01'";
-        if (tipo.contains("timestamp"))
-            return "'1970-01-01 00:00:00'";
-        if (tipo.contains("float") || tipo.contains("double") || tipo.contains("numeric") || tipo.contains("real"))
-            return "0.0";
-
-        return "null";
-    }
-
-    public String obterDefinicaoView(Connection conexao, String schema, String viewName) throws SQLException {
-
-        String sql = """
-                    SELECT pg_get_viewdef(format('%I.%I', ?, ?)::regclass, true) AS view_definition
-                """;
-
-        try (PreparedStatement pst = conexao.prepareStatement(sql)) {
-            pst.setString(1, schema);
-            pst.setString(2, viewName);
-
-            try (ResultSet rs = pst.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("view_definition");
-                }
-            }
-        }
-
-        return null;
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Entrada principal do serviço: VERIFICAÇÃO COMPLETA DA TABELA
-    // ---------------------------------------------------------------------------------------------
-    public void gerarScriptsViewsDependentes(
-            Connection conexaoCloud,
-            Connection conexaoLocal,
-            String nomeTabela,
-            ResultadoComparacao resultado,
-            List<String> dropViewsDependentes,
-            List<String> createViewsDependentes) throws SQLException {
-
-        String schemaTabela = utilsSync.extrairSchema(nomeTabela);
-        String tabela = utilsSync.extrairTabela(nomeTabela);
-
-        for (String colunaAlterada : resultado.getColunasAlteradas()) {
-
-            // 1. Buscar se existem views dependentes desta coluna
-            List<String> viewsDep = buscarViewsDependentes(
-                    conexaoLocal,
-                    schemaTabela,
-                    tabela,
-                    colunaAlterada);
-
-            // 2. Para cada view dependente gerar DROP + CREATE
-            for (String viewName : viewsDep) {
-
-                String schemaView = utilsSync.extrairSchema(viewName);
-                String nomeView = utilsSync.extrairTabela(viewName);
-
-                if (!isView(conexaoCloud, schemaView, nomeView)) {
-                    continue;
-                }
-
-                if (viewName.contains("public.registro_credito_operacionalidade_view")) {
-                    System.out.println(viewName);
-                }
-
-                // DROP VIEW
-                dropViewsDependentes.add(
-                        "DROP VIEW IF EXISTS " + viewName + " CASCADE;");
-
-                String defView = obterDefinicaoView(conexaoCloud, schemaView, nomeView);
-
-                if (defView == null || defView.isBlank()) {
-                    System.out.println(
-                            "⚠ View ignorada (definição nula): " + viewName);
-                    continue;
-                }
-
-                defView = defView.trim();
-
-                // CREATE VIEW
-                createViewsDependentes.add(
-                        """
-                                CREATE OR REPLACE VIEW %s AS
-                                %s;
-                                """.formatted(viewName, defView));
-            }
-        }
-    }
-
-    public boolean isView(Connection conn, String schema, String viewName) throws SQLException {
-        // Ignore catálogos internos
-        if (schema.equalsIgnoreCase("pg_catalog") ||
-                schema.equalsIgnoreCase("information_schema") ||
-                schema.startsWith("pg_") ||
-                viewName.startsWith("pg_")) {
-            return false;
-        }
-
-        String sql = """
-                    SELECT COUNT(*)
-                    FROM information_schema.views
-                    WHERE table_schema = ?
-                      AND table_name = ?
-                """;
-
-        try (PreparedStatement pst = conn.prepareStatement(sql)) {
-            pst.setString(1, schema);
-            pst.setString(2, viewName);
-
-            try (ResultSet rs = pst.executeQuery()) {
-                if (rs.next())
-                    return rs.getInt(1) > 0;
-            }
-        }
-        return false;
     }
 
 }

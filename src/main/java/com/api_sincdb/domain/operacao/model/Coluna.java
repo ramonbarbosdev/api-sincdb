@@ -1,11 +1,14 @@
 package com.api_sincdb.domain.operacao.model;
 
 import java.util.Objects;
+
 public class Coluna {
     private String nome;
     private String tipo;
     private boolean nullable;
     private String defaultValor;
+
+    private boolean autoIncrement;
 
     // Getters e Setters
     public String getNome() {
@@ -38,5 +41,13 @@ public class Coluna {
 
     public void setDefaultValor(String defaultValor) {
         this.defaultValor = defaultValor;
+    }
+
+    public boolean isAutoIncrement() {
+        return autoIncrement;
+    }
+
+    public void setAutoIncrement(boolean autoIncrement) {
+        this.autoIncrement = autoIncrement;
     }
 }
