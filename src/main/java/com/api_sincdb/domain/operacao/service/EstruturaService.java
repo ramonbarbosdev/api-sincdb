@@ -231,7 +231,7 @@ public class EstruturaService {
                 conexaoCloud, conexaoLocal, tabelasCloud, tabelasLocal, detalhes, database);
 
         resultado.put("Schemas", tabelas.getOrDefault("Schemas", List.of()));
-        resultado.put("Sequências", infraBase.getOrDefault("Sequências", List.of()));
+        // resultado.put("Sequências", infraBase.getOrDefault("Sequências", List.of()));
         resultado.put("Criação de Tabelas", tabelas.getOrDefault("Criação de Tabelas", List.of()));
         resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
         resultado.put("DropViewsDependentes", tabelas.getOrDefault("DropViewsDependentes", List.of()));
