@@ -359,7 +359,7 @@ public class DadosService {
                         t.relname as table_name,
                         a.attname as column_name,
                         sn.nspname as sequence_schema,
-                        s.relname as sequence_name
+                        concat(sn.nspname,'.',s.relname)  as sequence_name
                     from pg_class s
                     join pg_depend d on d.objid = s.oid
                     join pg_class t on d.refobjid = t.oid
