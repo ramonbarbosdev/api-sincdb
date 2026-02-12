@@ -30,6 +30,7 @@ import com.api_sincdb.config.ConexaoBanco;
 import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
+import com.api_sincdb.domain.operacao.model.TerminalLog;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.helper.EstruturaDadosUtils;
@@ -122,7 +123,8 @@ public class EstruturaService {
             if (queries != null) {
 
                 cacheService.salvarCache(database + "_estrutura:", queries);
-                Map<String, List<EstruturaTabela>> categorias = MontarEstruturaResponseUtils.montarDetalhesPorCategoria(queries);
+                Map<String, List<EstruturaTabela>> categorias = MontarEstruturaResponseUtils
+                        .montarDetalhesPorCategoria(queries);
 
                 response.putAll(categorias);
             }
@@ -220,7 +222,9 @@ public class EstruturaService {
             throws SQLException, InterruptedException {
 
         processoService.iniciarProcesso(database);
-        logPublisher.enviarLog("Iniciando processamento...");
+
+        logPublisher.enviarLog(
+                TerminalLog.warn("Iniciando processamento"));
 
         Map<String, List<String>> resultado = new LinkedHashMap<>();
 
@@ -241,8 +245,9 @@ public class EstruturaService {
         resultado.put("Extensões", infraBase.getOrDefault("Extensões", List.of()));
         resultado.put("Funções", infraBase.getOrDefault("Funções", List.of()));
 
-        processoService.enviarProgresso("Concluído", 100, "Processamento concluído", null);
-        logPublisher.enviarLog("Processamento concluído com sucesso");
+        processoService.enviarProgresso("Concluído", 100, "Verificação concluída.", null);
+        logPublisher.enviarLog(
+                TerminalLog.done("Verificação concluída."));
 
         return resultado;
     }
@@ -253,6 +258,9 @@ public class EstruturaService {
             String database,
             String esquema,
             List<EstruturaTabela> detalhes) throws SQLException {
+
+        logPublisher.enviarLog(
+                    TerminalLog.info("Construindo infraestrutura do banco"));
 
         Map<String, List<String>> infra = new LinkedHashMap<>();
 
@@ -272,6 +280,8 @@ public class EstruturaService {
         if (!f.isEmpty()) {
             funcoes.addAll(f);
             detalhes.add(new EstruturaTabela("Todas", "Função"));
+            logPublisher.enviarLog(
+                    TerminalLog.ok("Funções"));
         }
 
         // 3. Extensões
@@ -279,6 +289,8 @@ public class EstruturaService {
         if (!e.isEmpty()) {
             extensoes.addAll(e);
             detalhes.add(new EstruturaTabela("Todas", "Extensão"));
+            logPublisher.enviarLog(
+                    TerminalLog.ok("Extensões"));
         }
 
         // 4. Views
@@ -286,14 +298,14 @@ public class EstruturaService {
         if (!v.isEmpty()) {
             views.addAll(v);
             detalhes.add(new EstruturaTabela("Todas", "Views"));
+            logPublisher.enviarLog(
+                    TerminalLog.ok("Views"));
         }
 
         infra.put("Extensões", extensoes);
         infra.put("Funções", funcoes);
         infra.put("Sequências", sequencias);
         infra.put("Views", views);
-
-        logPublisher.enviarLog("Infraestrutura do banco concluída.");
 
         return infra;
     }
@@ -322,7 +334,8 @@ public class EstruturaService {
         AtomicInteger processadas = new AtomicInteger();
 
         processoService.enviarProgresso("Iniciando", 0, "Processando " + totalTabelas + " tabelas", null);
-        logPublisher.enviarLog("Processando " + totalTabelas + " tabelas");
+        logPublisher.enviarLog(
+                TerminalLog.warn("Iniciando a verificação de " + totalTabelas + " tabelas"));
 
         for (String tabela : tabelasCloud) {
 
@@ -331,7 +344,8 @@ public class EstruturaService {
 
             int progresso = (int) ((processadas.incrementAndGet() / (double) totalTabelas) * 100);
             processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + tabela, tabela);
-            logPublisher.enviarLog("Processando tabela: " + tabela);
+             logPublisher.enviarLog(
+                    TerminalLog.tabela(tabela));
 
             String schema = utilsSync.extrairSchema(tabela);
 
@@ -342,6 +356,8 @@ public class EstruturaService {
                     String schemaQuery = databaseService.gerarQueryCriacaoSchemas(conexaoLocal, schema);
                     if (schemaQuery != null && !schemaQuery.isBlank())
                         criacaoSchema.add(schemaQuery);
+                        logPublisher.enviarLog(
+                            TerminalLog.ok("Schema"));
                 }
 
                 // Criar tabela
@@ -349,6 +365,8 @@ public class EstruturaService {
                 if (create != null && !create.isBlank()) {
                     criacoesTabela.add(create);
                     detalhes.add(new EstruturaTabela(tabela, "Criação"));
+                    logPublisher.enviarLog(
+                            TerminalLog.ok("Criação"));
                 }
 
                 // FK
@@ -368,6 +386,13 @@ public class EstruturaService {
 
                     alteracoes.addAll(resultado.getAlteracoes());
                     detalhes.add(new EstruturaTabela(tabela, "Atualização"));
+                    logPublisher.enviarLog(
+                            TerminalLog.ok("Atualização de estrutura"));
+                }
+                else
+                {
+                    logPublisher.enviarLog(
+                        TerminalLog.info("Nenhuma criação ou atualização encontrada."));
                 }
             }
         }
