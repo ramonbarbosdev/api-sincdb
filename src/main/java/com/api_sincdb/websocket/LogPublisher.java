@@ -11,7 +11,7 @@ public class LogPublisher {
     private SimpMessagingTemplate messagingTemplate;
 
     public void enviarLog(String mensagem) {
-        System.out.println("Verificando alteracao na tabela: " + mensagem);
+        System.out.println(mensagem);
         messagingTemplate.convertAndSend("/topic/logs", mensagem);
     }
 }

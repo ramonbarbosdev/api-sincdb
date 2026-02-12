@@ -39,6 +39,7 @@ import com.api_sincdb.config.ConexaoBanco;
 import com.api_sincdb.domain.info.service.SincronizacaoSchemaService;
 import com.api_sincdb.domain.operacao.model.EstruturaTabela;
 import com.api_sincdb.domain.operacao.model.TabelaDetalhe;
+import com.api_sincdb.domain.operacao.model.TerminalLog;
 import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.helper.EstruturaDadosUtils;
@@ -223,20 +224,26 @@ public class DadosService {
         List<String> criacaoDados = Collections.synchronizedList(new ArrayList<>());
         List<String> atualizacaoDados = Collections.synchronizedList(new ArrayList<>());
 
-        // Processamento
+        //inicio - Feedback Usuario
         int totalTabelas = tabelas.size();
         AtomicInteger tabelasProcessadas = new AtomicInteger(0);
         processoService.enviarProgresso("Iniciando", 0, "Iniciando processamento de " + totalTabelas + " tabelas.",
                 null);
+        logPublisher.enviarLog(
+                TerminalLog.warn("Iniciando processamento de " + totalTabelas + " tabelas"));
+        //fim - Feedback Usuario
 
-        logPublisher.enviarLog("Iniciando processamento de " + totalTabelas + " tabelas.");
 
         for (String itemTabela : tabelas) {
+
+            //inicio - Feedback Usuario
             if (Thread.currentThread().isInterrupted())
                 throw new InterruptedException("Cancelado");
-
+            logPublisher.enviarLog(
+                    TerminalLog.tabela(itemTabela));
             int progresso = (int) ((tabelasProcessadas.incrementAndGet() / (double) totalTabelas) * 100);
             processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + itemTabela, itemTabela);
+            //fim - Feedback Usuario
 
             Map<String, Object> parametros = definirParametrosVerificacao(conexaoCloud, conexaoLocal, itemTabela);
 
@@ -244,7 +251,9 @@ public class DadosService {
                 TabelaDetalhe infoDetalhe = new TabelaDetalhe();
 
                 if ((Boolean) parametros.get("novo")) {
-                    logPublisher.enviarLog("Criacao da script da '" + itemTabela + "'.");
+
+                    logPublisher.enviarLog(
+                            TerminalLog.info("Gerando carga inicial"));
 
                     List<String> query = criarInsertsDadosService.cargaInicialCompleta(conexaoCloud, conexaoLocal,
                             itemTabela);
@@ -255,11 +264,12 @@ public class DadosService {
                         infoDetalhe.setLinhaInseridas(query.size());
                         detalhes.add(infoDetalhe);
                         criacaoDados.addAll(query);
+
+                        logPublisher.enviarLog(
+                                TerminalLog.ok(query.size() + " registros inseridos"));
                     }
 
                 } else if ((Boolean) parametros.get("existente")) {
-
-                    logPublisher.enviarLog("Tabela '" + itemTabela + "' com atualizações de dados pendendes.");
 
                     String pkColumn = (String) parametros.get("pkColumn");
 
@@ -274,29 +284,39 @@ public class DadosService {
                         infoDetalhe.setQuerys(String.join(";\n", query));
                         detalhes.add(infoDetalhe);
                         atualizacaoDados.addAll(query);
+
+                        logPublisher.enviarLog(
+                                TerminalLog.ok(query.size() + " registros atualizados"));
                     }
 
                 } else {
-                    logPublisher.enviarLog("Tabela '" + itemTabela + "' não possui atualizações de dados pendentes.");
+                    logPublisher.enviarLog(
+                            TerminalLog.skip("Nenhum registro necessário"));
 
                 }
 
                 String querySeq = atualizarSequencias(conexaoLocal, itemTabela);
                 if (querySeq != null) {
                     infoDetalhe.setTabela(itemTabela);
-                    infoDetalhe.setAcao("Atualização Sequencia");
+                    infoDetalhe.setAcao("Atualização Sequência");
                     infoDetalhe.setLinhaInseridas(1);
                     infoDetalhe.setQuerys(querySeq);
                     detalhes.add(infoDetalhe);
                     criacaoAtualizacaoSeq.add(querySeq);
+
+                    logPublisher.enviarLog(
+                            TerminalLog.ok("Sequência atualizada"));
+
                 }
             }
 
         }
 
-        // Processamento
-        processoService.enviarProgresso("Concluido", 100, "Verificação concluída com sucesso", null);
-        logPublisher.enviarLog("Verificação concluída com sucesso");
+        //inicio - Feedback Usuario
+        processoService.enviarProgresso("Concluido", 100, "Verificação concluída.", null);
+        logPublisher.enviarLog(
+                TerminalLog.done("Verificação concluída."));
+        //fim - Feedback Usuario
 
         HashMap<String, List<String>> queries = new LinkedHashMap<>();
         queries.put("Criacao", criacaoDados);
@@ -333,20 +353,24 @@ public class DadosService {
 
         try {
 
-            String query = "select " +
-                    "t.table_schema, " +
-                    "t.table_name, " +
-                    "c.column_name, " +
-                    "c.column_default, " +
-                    "s.schemaname AS sequence_schema, " +
-                    "s.sequencename AS sequence_name, " +
-                    "s.last_value " +
-                    "from information_schema.columns c " +
-                    "join information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema "
-                    +
-                    "join pg_sequences s on c.column_default like '%nextval(''' || s.sequencename || '''%' " +
-                    "where t.table_name = ? " +
-                    "and t.table_schema = ? ;";
+            String query = """
+                    select
+                        n.nspname as table_schema,
+                        t.relname as table_name,
+                        a.attname as column_name,
+                        sn.nspname as sequence_schema,
+                        s.relname as sequence_name
+                    from pg_class s
+                    join pg_depend d on d.objid = s.oid
+                    join pg_class t on d.refobjid = t.oid
+                    join pg_attribute a on a.attrelid = t.oid and a.attnum = d.refobjsubid
+                    join pg_namespace sn on sn.oid = s.relnamespace
+                    join pg_namespace n on n.oid = t.relnamespace
+                    where s.relkind = 'S'
+                    and t.relname = ?
+                    and n.nspname = ?;
+                    """;
+            ;
 
             PreparedStatement stmt = conexao.prepareStatement(query.toString());
 

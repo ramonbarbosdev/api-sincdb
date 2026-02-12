@@ -16,7 +16,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class ProcessoService {
 
-    
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
@@ -41,8 +40,7 @@ public class ProcessoService {
         processosCancelados.remove(processoId);
     }
 
-    public void enviarProgresso(String status, int progresso, String mensagem, String tabelaAtual)
-    {
+    public void enviarProgresso(String status, int progresso, String mensagem, String tabelaAtual) {
 
         Map<String, Object> progressoMsg = new HashMap<>();
         progressoMsg.put("status", status);
@@ -54,5 +52,17 @@ public class ProcessoService {
         // System.out.println("Enviando progresso para /topic/sync/progress");
         messagingTemplate.convertAndSend("/topic/sync/progress", progressoMsg);
     }
-   
+
+    public static String progress(int atual, int total) {
+
+        int percent = (int) ((atual / (double) total) * 100);
+
+        int bars = percent / 5;
+
+        String bar = "█".repeat(bars) + " ".repeat(20 - bars);
+
+        return String.format("[PROG ] [%s] %d%% (%d/%d)",
+                bar, percent, atual, total);
+    }
+
 }
