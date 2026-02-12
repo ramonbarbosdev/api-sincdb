@@ -9,6 +9,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -544,6 +545,64 @@ public class DatabaseService {
         } catch (SQLException e) {
             throw new RuntimeException(e.getMessage());
         }
+
+    }
+
+    public List<String> gerarScriptsEnums(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String schema) throws SQLException {
+
+        String sql = """
+                SELECT
+                    n.nspname AS schema_name,
+                    t.typname AS enum_name,
+                    e.enumlabel AS enum_value,
+                    e.enumsortorder
+                FROM pg_type t
+                JOIN pg_enum e ON t.oid = e.enumtypid
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+                WHERE n.nspname = ?
+                ORDER BY t.typname, e.enumsortorder
+                """;
+
+        PreparedStatement ps = conexaoCloud.prepareStatement(sql);
+
+        ps.setString(1, schema);
+
+        ResultSet rs = ps.executeQuery();
+
+        Map<String, List<String>> enums = new LinkedHashMap<>();
+
+        while (rs.next()) {
+
+            String enumName = rs.getString("enum_name");
+
+            String enumValue = rs.getString("enum_value");
+
+            enums.computeIfAbsent(enumName, k -> new ArrayList<>())
+                    .add("'" + enumValue + "'");
+
+        }
+
+        List<String> scripts = new ArrayList<>();
+
+        for (Map.Entry<String, List<String>> entry : enums.entrySet()) {
+
+            String enumName = entry.getKey();
+
+            List<String> values = entry.getValue();
+
+            String script = "CREATE TYPE " + schema + "." + enumName +
+                    " AS ENUM (\n    " +
+                    String.join(",\n    ", values) +
+                    "\n);";
+
+            scripts.add(script);
+
+        }
+
+        return scripts;
 
     }
 

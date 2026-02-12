@@ -197,7 +197,6 @@ public class EstruturaService {
                     "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
                     TipoOperacao.ESTRUTURA);
 
-
         } catch (Exception e) {
 
             sincronizacaoSchemaService.finalizarErro(database,
@@ -236,6 +235,7 @@ public class EstruturaService {
                 conexaoCloud, conexaoLocal, tabelasCloud, tabelasLocal, detalhes, database);
 
         resultado.put("Schemas", tabelas.getOrDefault("Schemas", List.of()));
+        resultado.put("Enums", infraBase.getOrDefault("Enums", List.of()));
         // resultado.put("Sequências", infraBase.getOrDefault("Sequências", List.of()));
         resultado.put("Criação de Tabelas", tabelas.getOrDefault("Criação de Tabelas", List.of()));
         resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
@@ -270,6 +270,7 @@ public class EstruturaService {
         List<String> funcoes = new ArrayList<>();
         List<String> extensoes = new ArrayList<>();
         List<String> views = new ArrayList<>();
+        List<String> enums = new ArrayList<>();
 
         // 1. Sequências
         String sequenciaQuery = databaseService.criarSequenciaQuery(conexaoCloud, conexaoLocal, esquema);
@@ -303,7 +304,21 @@ public class EstruturaService {
                     TerminalLog.ok("Views"));
         }
 
+        // >5. Enums
+        List<String> en = databaseService.gerarScriptsEnums(
+                conexaoCloud,
+                conexaoLocal,
+                esquema);
+
+        if (!en.isEmpty()) {
+            enums.addAll(en);
+            detalhes.add(new EstruturaTabela("Todas", "Enum"));
+            logPublisher.enviarLog(
+                    TerminalLog.ok("Enums"));
+        }
+
         infra.put("Extensões", extensoes);
+        infra.put("Enums", enums);
         infra.put("Funções", funcoes);
         infra.put("Sequências", sequencias);
         infra.put("Views", views);
