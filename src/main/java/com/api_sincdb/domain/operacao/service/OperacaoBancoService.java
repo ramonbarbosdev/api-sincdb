@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.api_sincdb.domain.operacao.model.TerminalLog;
 import com.api_sincdb.domain.parametro.service.ParametroMasterService;
 import com.api_sincdb.websocket.LogPublisher;
 
@@ -44,6 +45,10 @@ public class OperacaoBancoService {
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
             List<Map<String, String>> detalhes) throws IOException {
         try {
+
+            logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
+
+
             int totalQueries = queries.values().stream().mapToInt(List::size).sum();
             AtomicInteger queriesExecutadas = new AtomicInteger(0);
 
@@ -72,23 +77,23 @@ public class OperacaoBancoService {
 
             }
 
+            logPublisher.enviarLog(TerminalLog.done("Sincronização concluída com sucesso"));
             processoService.enviarProgresso("Concluido", 100, "Sincronização concluída com sucesso", null);
-            logPublisher.enviarLog("Sincronização concluída com sucesso");
 
         } catch (SQLException e) {
-            logPublisher.enviarLog("Falha na transação geral: " + e.getMessage());
+            logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
 
             try {
                 conexao.rollback();
             } catch (SQLException ex) {
-                logPublisher.enviarLog("Erro ao tentar rollback: " + ex.getMessage());
+                logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
 
             }
         } finally {
             try {
                 conexao.setAutoCommit(true);
             } catch (SQLException e) {
-                logPublisher.enviarLog("Erro ao reativar autoCommit: " + e.getMessage());
+                logPublisher.enviarLog(TerminalLog.error("Erro ao reativar autoCommit: " + e.getMessage()));
 
             }
         }
@@ -106,7 +111,7 @@ public class OperacaoBancoService {
         if (queries == null || queries.isEmpty())
             return;
 
-        logPublisher.enviarLog("\n=== Executando grupo: " + tipo + " ===");
+        logPublisher.enviarLog(TerminalLog.info("Executando " + tipo));
 
         AtomicInteger ultimoProgressoEnviado = new AtomicInteger(-1);
 
@@ -125,15 +130,15 @@ public class OperacaoBancoService {
 
             // Envia log somente a cada 200 registros
             if (queriesExecutadas.get() % 200 == 0) {
-                logPublisher.enviarLog("Processando " + tipo + ": " + tabela);
+                logPublisher.enviarLog(TerminalLog.info("Processando " + tipo + ": " + tabela));
             }
 
             try (java.sql.Statement stmt = conexao.createStatement()) {
                 stmt.execute(query);
             } catch (SQLException e) {
 
-                logPublisher.enviarLog("ERRO AO EXECUTAR QUERY (" + tipo + "):");
-                logPublisher.enviarLog(query);
+                logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (" + tipo + "):"));
+                logPublisher.enviarLog(TerminalLog.error(query));
 
                 Map<String, String> criarDetalhe = new LinkedHashMap<>();
                 criarDetalhe.put("tabela", tabela);
@@ -141,7 +146,8 @@ public class OperacaoBancoService {
                 criarDetalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
                 detalhes.add(criarDetalhe);
 
-                logPublisher.enviarLog(e.getMessage() + " | SQLState: " + e.getSQLState());
+                logPublisher.enviarLog(TerminalLog.error(e.getMessage() + " | SQLState: " + e.getSQLState()));
+
 
                 if (!continuarEmErro) {
                     throw e;

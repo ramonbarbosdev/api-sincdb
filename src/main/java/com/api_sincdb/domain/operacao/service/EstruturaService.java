@@ -173,7 +173,7 @@ public class EstruturaService {
             if (querys == null) {
                 response.put("sucesso", false);
                 response.put("message", "Nenhuma verificação foi feita previamente.");
-                logPublisher.enviarLog("Nenhuma verificação foi feita previamente.");
+                logPublisher.enviarLog(TerminalLog.warn("Nenhuma verificação foi feita previamente."));
 
                 sincronizacaoSchemaService.finalizarErro(database,
                         esquema, usuario, "Sincronização abortada: scripts não encontrados.", TipoOperacao.ESTRUTURA);
@@ -196,6 +196,7 @@ public class EstruturaService {
                     esquema, usuario,
                     "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
                     TipoOperacao.ESTRUTURA);
+
 
         } catch (Exception e) {
 
@@ -260,7 +261,7 @@ public class EstruturaService {
             List<EstruturaTabela> detalhes) throws SQLException {
 
         logPublisher.enviarLog(
-                    TerminalLog.info("Construindo infraestrutura do banco"));
+                TerminalLog.info("Construindo infraestrutura do banco"));
 
         Map<String, List<String>> infra = new LinkedHashMap<>();
 
@@ -344,7 +345,7 @@ public class EstruturaService {
 
             int progresso = (int) ((processadas.incrementAndGet() / (double) totalTabelas) * 100);
             processoService.enviarProgresso("Processando", progresso, "Processando tabela: " + tabela, tabela);
-             logPublisher.enviarLog(
+            logPublisher.enviarLog(
                     TerminalLog.tabela(tabela));
 
             String schema = utilsSync.extrairSchema(tabela);
@@ -356,7 +357,7 @@ public class EstruturaService {
                     String schemaQuery = databaseService.gerarQueryCriacaoSchemas(conexaoLocal, schema);
                     if (schemaQuery != null && !schemaQuery.isBlank())
                         criacaoSchema.add(schemaQuery);
-                        logPublisher.enviarLog(
+                    logPublisher.enviarLog(
                             TerminalLog.ok("Schema"));
                 }
 
@@ -388,11 +389,9 @@ public class EstruturaService {
                     detalhes.add(new EstruturaTabela(tabela, "Atualização"));
                     logPublisher.enviarLog(
                             TerminalLog.ok("Atualização de estrutura"));
-                }
-                else
-                {
+                } else {
                     logPublisher.enviarLog(
-                        TerminalLog.info("Nenhuma criação ou atualização encontrada."));
+                            TerminalLog.info("Nenhuma criação ou atualização encontrada."));
                 }
             }
         }
