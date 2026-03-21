@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.stream.Collectors;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.api_sincdb.config.ConexaoBanco;
@@ -553,9 +555,61 @@ public class DatabaseService {
             Connection conexaoLocal,
             String schema) throws SQLException {
 
+        Map<String, List<String>> enumsCloud = carregarEnums(conexaoCloud, schema);
+        Map<String, List<String>> enumsLocal = carregarEnums(conexaoLocal, schema);
+
+        List<String> scripts = new ArrayList<>();
+
+        for (Map.Entry<String, List<String>> entry : enumsCloud.entrySet()) {
+
+            String enumName = entry.getKey();
+            List<String> cloudValues = entry.getValue();
+
+            List<String> localValues = enumsLocal.get(enumName);
+
+            if (localValues == null) {
+
+                String script = "DO $$\n" +
+                        "BEGIN\n" +
+                        "    IF NOT EXISTS (\n" +
+                        "        SELECT 1 FROM pg_type t\n" +
+                        "        JOIN pg_namespace n ON n.oid = t.typnamespace\n" +
+                        "        WHERE t.typname = '" + enumName + "'\n" +
+                        "        AND n.nspname = '" + schema + "'\n" +
+                        "    ) THEN\n" +
+                        "        CREATE TYPE " + schema + "." + enumName + " AS ENUM (\n    " +
+                        cloudValues.stream()
+                                .map(v -> "'" + v + "'")
+                                .collect(Collectors.joining(",\n    "))
+                        +
+                        "\n        );\n" +
+                        "    END IF;\n" +
+                        "END\n" +
+                        "$$;";
+
+                scripts.add(script);
+                continue;
+            }
+
+            for (String value : cloudValues) {
+
+                if (!localValues.contains(value)) {
+
+                    String script = "ALTER TYPE " + schema + "." + enumName +
+                            " ADD VALUE IF NOT EXISTS '" + value + "';";
+
+                    scripts.add(script);
+                }
+            }
+        }
+
+        return scripts;
+    }
+
+    private Map<String, List<String>> carregarEnums(Connection conn, String schema) throws SQLException {
+
         String sql = """
                 SELECT
-                    n.nspname AS schema_name,
                     t.typname AS enum_name,
                     e.enumlabel AS enum_value,
                     e.enumsortorder
@@ -566,8 +620,7 @@ public class DatabaseService {
                 ORDER BY t.typname, e.enumsortorder
                 """;
 
-        PreparedStatement ps = conexaoCloud.prepareStatement(sql);
-
+        PreparedStatement ps = conn.prepareStatement(sql);
         ps.setString(1, schema);
 
         ResultSet rs = ps.executeQuery();
@@ -577,33 +630,13 @@ public class DatabaseService {
         while (rs.next()) {
 
             String enumName = rs.getString("enum_name");
-
             String enumValue = rs.getString("enum_value");
 
             enums.computeIfAbsent(enumName, k -> new ArrayList<>())
-                    .add("'" + enumValue + "'");
-
+                    .add(enumValue);
         }
 
-        List<String> scripts = new ArrayList<>();
-
-        for (Map.Entry<String, List<String>> entry : enums.entrySet()) {
-
-            String enumName = entry.getKey();
-
-            List<String> values = entry.getValue();
-
-            String script = "CREATE TYPE " + schema + "." + enumName +
-                    " AS ENUM (\n    " +
-                    String.join(",\n    ", values) +
-                    "\n);";
-
-            scripts.add(script);
-
-        }
-
-        return scripts;
-
+        return enums;
     }
 
 }
