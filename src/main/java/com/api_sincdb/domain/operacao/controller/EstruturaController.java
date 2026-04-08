@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api_sincdb.domain.operacao.dto.EstruturaResponse;
+import com.api_sincdb.domain.operacao.dto.ResumoDTO;
 import com.api_sincdb.domain.operacao.service.EstruturaService;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
 import com.api_sincdb.util.MontarEstruturaResponseUtils;
@@ -69,7 +70,8 @@ public class EstruturaController {
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
-		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base, esquema);
+		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base,
+				esquema);
 
 		if (Boolean.TRUE.equals(resultado.get("sucesso")))
 			return new ResponseEntity<>(response, HttpStatus.OK);
@@ -83,8 +85,8 @@ public class EstruturaController {
 			@PathVariable(value = "esquema") String esquema, @PathVariable(value = "tabela") String tabela,
 			HttpServletRequest request) throws InterruptedException {
 
-		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
+		AtomicReference<Exception> erroRef = new AtomicReference<>();
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
@@ -95,8 +97,7 @@ public class EstruturaController {
 				resultadoRef.set(resultado);
 
 			} catch (Exception e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				erroRef.set(e);
 			}
 		});
 
@@ -109,8 +110,24 @@ public class EstruturaController {
 			}
 		}
 
+		if (erroRef.get() != null) {
+			Exception e = erroRef.get();
+			EstruturaResponse erroResponse = new EstruturaResponse();
+			erroResponse.setSucesso(false);
+			erroResponse.setBase(base);
+			erroResponse.setEsquema(esquema);
+			erroResponse.setGeradoEm(LocalDateTime.now());
+			ResumoDTO resumo = new ResumoDTO();
+			resumo.setMensagem(e.getMessage());
+			resumo.setPodeExecutar(false);
+			resumo.setPossuiOperacoesPerigosas(false);
+			erroResponse.setResumo(resumo);
+			return new ResponseEntity<>(erroResponse, HttpStatus.INTERNAL_SERVER_ERROR);
+		}
+
 		Map<String, Object> resultado = resultadoRef.get();
-		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base, esquema);
+		EstruturaResponse response = MontarEstruturaResponseUtils.montarEstruturaResponse(resultadoRef.get(), base,
+				esquema);
 
 		if (Boolean.TRUE.equals(resultado.get("sucesso")))
 			return new ResponseEntity<>(response, HttpStatus.OK);

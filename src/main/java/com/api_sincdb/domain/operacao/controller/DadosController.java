@@ -1,5 +1,6 @@
 package com.api_sincdb.domain.operacao.controller;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -12,6 +13,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.api_sincdb.domain.operacao.dto.EstruturaResponse;
+import com.api_sincdb.domain.operacao.dto.ResumoDTO;
 import com.api_sincdb.domain.operacao.service.DadosService;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
 import com.api_sincdb.util.ProcessoManager;
@@ -39,8 +42,8 @@ public class DadosController {
 	public ResponseEntity<?> verificarDados(@PathVariable(value = "base") String base,
 			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) throws InterruptedException {
 
-		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
+		AtomicReference<Exception> erroRef = new AtomicReference<>();
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
@@ -51,8 +54,7 @@ public class DadosController {
 				resultadoRef.set(resultado);
 
 			} catch (Exception e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				erroRef.set(e);
 			}
 		});
 
@@ -63,6 +65,21 @@ public class DadosController {
 				Thread.currentThread().interrupt();
 				break;
 			}
+		}
+
+		if (erroRef.get() != null) {
+			Exception e = erroRef.get();
+			EstruturaResponse erroResponse = new EstruturaResponse();
+			erroResponse.setSucesso(false);
+			erroResponse.setBase(base);
+			erroResponse.setEsquema(esquema);
+			erroResponse.setGeradoEm(LocalDateTime.now());
+			ResumoDTO resumo = new ResumoDTO();
+			resumo.setMensagem(e.getMessage());
+			resumo.setPodeExecutar(false);
+			resumo.setPossuiOperacoesPerigosas(false);
+			erroResponse.setResumo(resumo);
+			return new ResponseEntity<>(erroResponse, HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
@@ -79,8 +96,8 @@ public class DadosController {
 			@PathVariable(value = "esquema") String esquema, @PathVariable(value = "tabela") String tabela,
 			HttpServletRequest request) throws InterruptedException {
 
-		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
+		AtomicReference<Exception> erroRef = new AtomicReference<>();
 
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
@@ -91,8 +108,7 @@ public class DadosController {
 				resultadoRef.set(resultado);
 
 			} catch (Exception e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
+				erroRef.set(e);
 			}
 		});
 
@@ -103,6 +119,21 @@ public class DadosController {
 				Thread.currentThread().interrupt();
 				break;
 			}
+		}
+
+		if (erroRef.get() != null) {
+			Exception e = erroRef.get();
+			EstruturaResponse erroResponse = new EstruturaResponse();
+			erroResponse.setSucesso(false);
+			erroResponse.setBase(base);
+			erroResponse.setEsquema(esquema);
+			erroResponse.setGeradoEm(LocalDateTime.now());
+			ResumoDTO resumo = new ResumoDTO();
+			resumo.setMensagem(e.getMessage());
+			resumo.setPodeExecutar(false);
+			resumo.setPossuiOperacoesPerigosas(false);
+			erroResponse.setResumo(resumo);
+			return new ResponseEntity<>(erroResponse, HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
@@ -121,12 +152,13 @@ public class DadosController {
 	}
 
 	@GetMapping(value = "/{base}/{esquema}", produces = "application/json")
-	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
+	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,
+			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
 
 		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
-		Map<String, Object> resultado = dadosService.sincronizarDados(token, base,esquema, null, false);
+		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, esquema, null, false);
 
 		if ((Boolean) resultado.get("sucesso")) {
 			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
