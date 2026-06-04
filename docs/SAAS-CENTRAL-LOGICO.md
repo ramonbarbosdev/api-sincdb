@@ -166,3 +166,21 @@ Com a estrutura de organizacao e conexoes pronta, o proximo passo recomendado e 
 - exibir qual conexao e padrao;
 - permitir criar, editar, remover e marcar padrao;
 - garantir que as telas de sincronizacao avisem qual conexao padrao sera usada.
+
+## Explorador visual
+
+Endpoint para tela de exploracao visual:
+
+- `GET /explorador/{base}/{esquema}/comparar`
+
+Esse endpoint usa a conexao padrao da organizacao ativa e compara:
+
+- tabelas;
+- colunas;
+- tipos;
+- nulidade;
+- primary keys;
+- foreign keys;
+- indices.
+
+O retorno e estruturado para o frontend montar arvore lateral, diagrama, painel de detalhes, cards de resumo e preview SQL.

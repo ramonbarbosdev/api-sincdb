@@ -167,6 +167,10 @@ Considerando o `context-path` configurado como `/sincdb`, os endpoints ficam aba
 - `GET /sincdb/estrutura/{base}/{esquema}`: aplica a sincronizacao de estrutura.
 - `GET /sincdb/estrutura/cancelar`: cancela processo em andamento.
 
+### Explorador visual
+
+- `GET /sincdb/explorador/{base}/{esquema}/comparar`: compara metadados cloud/local e retorna JSON estruturado para tela visual com schemas, tabelas, colunas, indices, FKs, resumo e SQL preview.
+
 ### Dados
 
 - `GET /sincdb/dados/verificar/{base}/{esquema}`: verifica diferencas de dados.
