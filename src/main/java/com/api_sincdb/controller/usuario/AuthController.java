@@ -67,6 +67,20 @@ public class AuthController {
         }
     }
 
+    @PostMapping(value = "/selecionar-organizacao", produces = "application/json")
+    public ResponseEntity selecionarOrganizacao(@RequestBody AuthLoginDTO obj, HttpServletRequest request,
+            HttpServletResponse response) throws Exception {
+
+        try {
+            Map loginResponse = service.efetuarLogin(obj, response, request);
+
+            return ResponseEntity.ok().body(loginResponse);
+        } catch (Exception e) {
+            service.logout(request, response);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
+        }
+    }
+
     @Operation(summary = "Criaçao de usuario", description = "Faz registro do usuario")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Usuario criado"),

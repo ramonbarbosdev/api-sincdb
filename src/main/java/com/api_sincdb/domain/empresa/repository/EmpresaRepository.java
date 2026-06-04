@@ -23,6 +23,9 @@ public interface EmpresaRepository extends MongoRepository<Empresa, String> {
         @Query("{ 'nm_empresa': ?0 }")
         Optional<Empresa> findByNm_empresa(String nm_empresa);
 
+        @Query("{ 'id_tenant': ?0, 'fl_ativo': true }")
+        Optional<Empresa> findById_tenantAndFl_ativoTrue(String id_tenant);
+
         @Query("{ 'id': { $in: ?0 }, 'fl_ativo': true }")
         List<Empresa> findById_empresaInAndFl_ativoTrue(List<String> ids);
 }

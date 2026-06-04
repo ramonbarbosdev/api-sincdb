@@ -13,9 +13,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.ApplicationContextLoad;
+import com.api_sincdb.domain.empresa.model.Empresa;
+import com.api_sincdb.domain.empresa.repository.EmpresaRepository;
+import com.api_sincdb.domain.empresa.repository.UsuarioEmpresaRepository;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.MalformedJwtException;
@@ -47,7 +51,8 @@ public class JWTTokenAutenticacaoService {
         return new SecretKeySpec(decodedKey, "HmacSHA512");
     }
 
-    public String addAuthentication(HttpServletResponse response, String username, String idTenant) throws Exception {
+    public String addAuthentication(HttpServletResponse response, String username, String idTenant, String idEmpresa)
+            throws Exception {
         SecretKeySpec secretKey = createSecretKey();
 
         Usuario usuario = ApplicationContextLoad.getApplicationContext()
@@ -57,6 +62,7 @@ public class JWTTokenAutenticacaoService {
         String jwt = Jwts.builder()
                 .setSubject(username)
                 .claim("id_usuario", usuario.getId())
+                .claim("id_empresa", idEmpresa)
                 .claim("id_tenant", idTenant)
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
                 .signWith(secretKey, SignatureAlgorithm.HS512)
@@ -125,6 +131,36 @@ public class JWTTokenAutenticacaoService {
                 .get("id_tenant", String.class);
     }
 
+    public String extractEmpresaId(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("id_empresa", String.class);
+    }
+
+    public String extractSubject(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .getSubject();
+    }
+
     public String extractLogin(String token) {
         SecretKeySpec secretKey = createSecretKey();
 
@@ -187,27 +223,30 @@ public class JWTTokenAutenticacaoService {
 
     public Authentication getAuthentication(HttpServletRequest request, HttpServletResponse response) {
         SecretKeySpec secretKey = createSecretKey();
-        String token = request.getHeader(HEADER_STRING);
-
-        token = request.getHeader(HEADER_STRING);
+        String token = obterTokenHeaderOuCookie(request);
 
         if (token != null && token.startsWith(TOKEN_PREFIX)) {
             String jwt = token.replace(TOKEN_PREFIX, "").trim();
 
             try {
-                String user = Jwts.parserBuilder()
+                Claims claims = Jwts.parserBuilder()
                         .setSigningKey(secretKey)
                         .build()
                         .parseClaimsJws(jwt)
-                        .getBody()
-                        .getSubject();
+                        .getBody();
+
+                String user = claims.getSubject();
+                String idUsuario = claims.get("id_usuario", String.class);
+                String idEmpresa = claims.get("id_empresa", String.class);
+                String idTenant = claims.get("id_tenant", String.class);
 
                 if (user != null) {
                     Usuario usuario = ApplicationContextLoad.getApplicationContext()
                             .getBean(UsuarioRepository.class)
                             .findByLogin(user);
 
-                    if (usuario != null) {
+                    if (usuario != null && usuario.getId().equals(idUsuario)
+                            && validarAcessoTenant(usuario, idEmpresa, idTenant)) {
                         return new UsernamePasswordAuthenticationToken(
                                 usuario.getLogin(),
                                 usuario.getSenha(),
@@ -245,6 +284,25 @@ public class JWTTokenAutenticacaoService {
 
         liberacaoCors(response);
         return null;
+    }
+
+    private boolean validarAcessoTenant(Usuario usuario, String idEmpresa, String idTenant) {
+        if (idEmpresa == null || idEmpresa.isBlank() || idTenant == null || idTenant.isBlank()) {
+            return true;
+        }
+
+        Empresa empresa = ApplicationContextLoad.getApplicationContext()
+                .getBean(EmpresaRepository.class)
+                .findById(idEmpresa)
+                .orElse(null);
+
+        if (empresa == null || !empresa.isFl_ativo() || !idTenant.equals(empresa.getId_tenant())) {
+            return false;
+        }
+
+        return ApplicationContextLoad.getApplicationContext()
+                .getBean(UsuarioEmpresaRepository.class)
+                .existsById_usuarioAndId_empresa(usuario.getId(), idEmpresa);
     }
 
     private void liberacaoCors(HttpServletResponse response) {
