@@ -1,16 +1,16 @@
 package com.api_sincdb.controller.conexao;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
-
-import javax.swing.Spring;
 
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.context.TenantRuntimeContext;
 import com.api_sincdb.domain.conexao.dto.ConexaoDTO;
 import com.api_sincdb.domain.conexao.model.Conexao;
 import com.api_sincdb.domain.conexao.repository.ConexaoRepository;
@@ -29,8 +30,6 @@ import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.util.CriptoUtils;
 import com.api_sincdb.util.LeitorConfigSegura;
-
-
 
 @RestController
 @RequestMapping("/conexao")
@@ -44,169 +43,228 @@ public class ConexaoController {
 
     @PostMapping(value = "/", produces = "application/json")
     public ResponseEntity<?> salvar(@RequestBody ConexaoDTO conexaoDTO) {
+        Usuario user = resolverUsuario(conexaoDTO.getLogin());
+
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
+        }
+
+        String idEmpresa = resolverIdEmpresa(conexaoDTO);
+        String idTenant = resolverIdTenant(conexaoDTO);
+
+        if (idEmpresa == null || idEmpresa.isBlank() || idTenant == null || idTenant.isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("erro", "Organizacao ativa nao encontrada no token."));
+        }
 
         Conexao conexaoModel = new Conexao();
-
-
-        Usuario user = usuarioRepository.findByLogin(conexaoDTO.getLogin());
-
-        if (user == null)  return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado."));
-   
-        conexaoModel.setDb_cloud_host(conexaoDTO.getCloud().getDb_cloud_host());
-        conexaoModel.setDb_cloud_port(conexaoDTO.getCloud().getDb_cloud_port());
-        conexaoModel.setDb_cloud_user(conexaoDTO.getCloud().getDb_cloud_user());
-        conexaoModel.setDb_cloud_password(conexaoDTO.getCloud().getDb_cloud_password());
-
-        conexaoModel.setDb_local_host(conexaoDTO.getLocal().getDb_local_host());
-        conexaoModel.setDb_local_port(conexaoDTO.getLocal().getDb_local_port());
-        conexaoModel.setDb_local_user(conexaoDTO.getLocal().getDb_local_user());
-        conexaoModel.setDb_local_password(conexaoDTO.getLocal().getDb_local_password());
-
-        conexaoModel.setFl_admin(conexaoDTO.getCloud().getFl_admin());
+        preencherConexao(conexaoModel, conexaoDTO);
         conexaoModel.setIdUsuario(user.getId());
+        conexaoModel.setId_empresa(idEmpresa);
+        conexaoModel.setId_tenant(idTenant);
+        conexaoModel.setFl_ativo(conexaoDTO.getFl_ativo() == null ? true : conexaoDTO.getFl_ativo());
+
+        boolean primeiraConexao = !repository.existsById_empresaAndFl_ativoTrue(idEmpresa);
+        boolean marcarPadrao = primeiraConexao || Boolean.TRUE.equals(conexaoDTO.getFl_padrao());
+        conexaoModel.setFl_padrao(marcarPadrao);
+
+        if (marcarPadrao) {
+            desmarcarPadrao(idEmpresa, null);
+        }
 
         repository.save(conexaoModel);
+        ConexaoBanco.fecharTodos();
 
         return new ResponseEntity<Conexao>(conexaoModel, HttpStatus.OK);
     }
 
     @PutMapping(value = "/", produces = "application/json")
     public ResponseEntity<?> atualizar(@RequestBody ConexaoDTO conexaoDTO) {
+        String idEmpresa = resolverIdEmpresa(conexaoDTO);
+        Optional<Conexao> conexaoModelOptional = buscarConexaoDaOrganizacao(conexaoDTO.getId(), idEmpresa);
 
-        Usuario user = usuarioRepository.findByLogin(conexaoDTO.getLogin());
-
-        if (user == null)  return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado."));
-
-        conexaoDTO.setIdUsuario(user.getId());
-
-        Optional<Conexao> conexaoModelOptional = repository.findById(conexaoDTO.getId());
-
-        if (!conexaoModelOptional.isPresent()) {
+        if (conexaoModelOptional.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body("{\"erro\": \"Conexão não encontrada para atualização!\"}");
+                    .body(Map.of("erro", "Conexao nao encontrada para atualizacao."));
         }
 
-        Boolean fl_admin = conexaoDTO.getCloud().getFl_admin();
-        Boolean fl_adminantigo = conexaoModelOptional.get().getFl_admin();
         Conexao conexaoModel = conexaoModelOptional.get();
+        Boolean flAdminNovo = conexaoDTO.getCloud().getFl_admin();
+        Boolean flAdminAntigo = conexaoModel.getFl_admin();
 
-        conexaoModel.setDb_cloud_host(conexaoDTO.getCloud().getDb_cloud_host());
-        conexaoModel.setDb_cloud_port(conexaoDTO.getCloud().getDb_cloud_port());
-        conexaoModel.setDb_cloud_user(conexaoDTO.getCloud().getDb_cloud_user());
-        conexaoModel.setDb_cloud_password(conexaoDTO.getCloud().getDb_cloud_password());
-        conexaoModel.setFl_admin(fl_admin);
+        preencherConexao(conexaoModel, conexaoDTO);
 
-        if (fl_admin == false && fl_adminantigo == true) {
+        if (Boolean.FALSE.equals(flAdminNovo) && Boolean.TRUE.equals(flAdminAntigo)) {
+            boolean mesmoUsuarioCloud = conexaoModelOptional.get().getDb_cloud_user() != null
+                    && conexaoDTO.getCloud().getDb_cloud_user() != null
+                    && conexaoModelOptional.get().getDb_cloud_user().contains(conexaoDTO.getCloud().getDb_cloud_user());
 
-            if (conexaoModelOptional.get().getDb_cloud_user().contains(conexaoDTO.getCloud().getDb_cloud_user())
-                    || conexaoModelOptional.get().getDb_cloud_password()
-                            .contains(conexaoDTO.getCloud().getDb_cloud_password())) {
+            boolean mesmaSenhaCloud = conexaoModelOptional.get().getDb_cloud_password() != null
+                    && conexaoDTO.getCloud().getDb_cloud_password() != null
+                    && conexaoModelOptional.get().getDb_cloud_password()
+                            .contains(conexaoDTO.getCloud().getDb_cloud_password());
+
+            if (mesmoUsuarioCloud || mesmaSenhaCloud) {
                 conexaoModel.setDb_cloud_user("");
                 conexaoModel.setDb_cloud_password("");
             }
-
         }
 
-        conexaoModel.setDb_local_host(conexaoDTO.getLocal().getDb_local_host());
-        conexaoModel.setDb_local_port(conexaoDTO.getLocal().getDb_local_port());
-        conexaoModel.setDb_local_user(conexaoDTO.getLocal().getDb_local_user());
-        conexaoModel.setDb_local_password(conexaoDTO.getLocal().getDb_local_password());
+        if (conexaoDTO.getFl_ativo() != null) {
+            conexaoModel.setFl_ativo(conexaoDTO.getFl_ativo());
+        }
+
+        if (Boolean.TRUE.equals(conexaoDTO.getFl_padrao())) {
+            desmarcarPadrao(conexaoModel.getId_empresa(), conexaoModel.getId());
+            conexaoModel.setFl_padrao(true);
+        }
 
         repository.save(conexaoModel);
-
         ConexaoBanco.fecharTodos();
 
         return new ResponseEntity<Conexao>(conexaoModel, HttpStatus.OK);
     }
 
     @GetMapping(value = "/{login}", produces = "application/json")
-    public ResponseEntity<?> recuperarConexao(@PathVariable String login) {
-
+    public ResponseEntity<?> listarConexoes(@PathVariable String login) {
         Usuario user = usuarioRepository.findByLogin(login);
 
         if (user == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado.") );
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
         }
 
-        Conexao objeto = repository.findFirstByIdUsuario(user.getId());
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
 
-        if (objeto == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body( Map.of("message", "Conexão não encontrada!"));
+        if (idEmpresa != null && !idEmpresa.isBlank()) {
+            return ResponseEntity.ok(repository.findById_empresaAndFl_ativoTrue(idEmpresa));
         }
 
-        ConexaoDTO conexaoDTO = new ConexaoDTO();
+        return ResponseEntity.ok(repository.findByIdUsuario(user.getId()));
+    }
 
-        ConexaoDTO.CloudConnection cloud = new ConexaoDTO.CloudConnection();
-        cloud.setDb_cloud_host(objeto.getDb_cloud_host());
-        cloud.setDb_cloud_port(objeto.getDb_cloud_port());
-        cloud.setDb_cloud_user(objeto.getDb_cloud_user());
-        cloud.setDb_cloud_password(objeto.getDb_cloud_password());
-        cloud.setFl_admin(objeto.getFl_admin());
+    @GetMapping(value = "/{login}/{id}", produces = "application/json")
+    public ResponseEntity<?> recuperarConexao(@PathVariable String login, @PathVariable String id) {
+        Usuario user = usuarioRepository.findByLogin(login);
 
-        ConexaoDTO.LocalConnection local = new ConexaoDTO.LocalConnection();
-        local.setDb_local_host(objeto.getDb_local_host());
-        local.setDb_local_port(objeto.getDb_local_port());
-        local.setDb_local_user(objeto.getDb_local_user());
-        local.setDb_local_password(objeto.getDb_local_password());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
+        }
 
-        conexaoDTO.setId(objeto.getId());
-        conexaoDTO.setCloud(cloud);
-        conexaoDTO.setLocal(local);
-        return ResponseEntity.ok(conexaoDTO);
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        Optional<Conexao> conexao = buscarConexaoDaOrganizacao(id, idEmpresa);
+
+        if (conexao.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Conexao nao encontrada."));
+        }
+
+        return ResponseEntity.ok(conexao.get());
+    }
+
+    @PutMapping(value = "/{login}/{id}/padrao", produces = "application/json")
+    public ResponseEntity<?> definirPadrao(@PathVariable String login, @PathVariable String id) {
+        Usuario user = usuarioRepository.findByLogin(login);
+
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
+        }
+
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        Optional<Conexao> conexaoOptional = buscarConexaoDaOrganizacao(id, idEmpresa);
+
+        if (conexaoOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Conexao nao encontrada."));
+        }
+
+        Conexao conexao = conexaoOptional.get();
+        desmarcarPadrao(conexao.getId_empresa(), conexao.getId());
+        conexao.setFl_padrao(true);
+        repository.save(conexao);
+        ConexaoBanco.fecharTodos();
+
+        return ResponseEntity.ok(conexao);
+    }
+
+    @DeleteMapping(value = "/{login}/{id}", produces = "application/json")
+    public ResponseEntity<?> remover(@PathVariable String login, @PathVariable String id) {
+        Usuario user = usuarioRepository.findByLogin(login);
+
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
+        }
+
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        Optional<Conexao> conexaoOptional = buscarConexaoDaOrganizacao(id, idEmpresa);
+
+        if (conexaoOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "Conexao nao encontrada."));
+        }
+
+        Conexao conexao = conexaoOptional.get();
+        boolean eraPadrao = Boolean.TRUE.equals(conexao.getFl_padrao());
+        conexao.setFl_ativo(false);
+        conexao.setFl_padrao(false);
+        repository.save(conexao);
+
+        if (eraPadrao) {
+            promoverPrimeiraConexaoAtiva(conexao.getId_empresa());
+        }
+
+        ConexaoBanco.fecharTodos();
+        return ResponseEntity.ok(Map.of("message", "Conexao removida com sucesso."));
     }
 
     @PostMapping("/certificado/upload/{login}")
     public ResponseEntity<?> uploadCertificado(@PathVariable String login,
             @RequestParam("arquivo") MultipartFile arquivo) {
         try {
-
             Usuario user = usuarioRepository.findByLogin(login);
 
             if (user == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario não encontrado."));
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("erro", "Usuario nao encontrado."));
             }
-            String idUsuario = user.getId();
 
-            // byte[] chave = CriptoUtils.gerarChave256(System.getenv("SEGREDO_CONFIG"));
+            String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+            String idTenant = TenantRuntimeContext.getIdTenant();
+
+            if (idEmpresa == null || idEmpresa.isBlank() || idTenant == null || idTenant.isBlank()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of("erro", "Organizacao ativa nao encontrada no token."));
+            }
+
             String segredo = "wD7#G2k!91zL*qpB3VmX8eTR";
-
             byte[] chave = CriptoUtils.gerarChave256(segredo);
             String conteudo = new String(arquivo.getBytes(), StandardCharsets.UTF_8);
-
             String jsonDescriptografado = CriptoUtils.descriptografar(conteudo, chave);
 
             JSONObject obj = new JSONObject(jsonDescriptografado);
 
             if (!obj.has("user") || !obj.has("password")) {
-                return ResponseEntity.badRequest().body("Certificado inválido.");
+                return ResponseEntity.badRequest().body("Certificado invalido.");
             }
 
-            Optional<Conexao> conexaoModelOptional = Optional
-                    .ofNullable(repository.findFirstByIdUsuario(idUsuario));
+            Conexao conexaoModel = repository.findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(idEmpresa)
+                    .orElseGet(Conexao::new);
 
-            if (!conexaoModelOptional.isPresent()) {
+            conexaoModel.setDb_cloud_host(obj.getString("host"));
+            conexaoModel.setDb_cloud_port(obj.getString("port"));
+            conexaoModel.setDb_cloud_user(obj.getString("user"));
+            conexaoModel.setDb_cloud_password(obj.getString("password"));
+            conexaoModel.setFl_admin(true);
+            conexaoModel.setIdUsuario(user.getId());
+            conexaoModel.setId_empresa(idEmpresa);
+            conexaoModel.setId_tenant(idTenant);
+            conexaoModel.setFl_ativo(true);
+            conexaoModel.setFl_padrao(true);
 
-                Conexao conexaoModel = new Conexao();
-                conexaoModel.setDb_cloud_host(obj.getString("host"));
-                conexaoModel.setDb_cloud_port(obj.getString("port"));
-                conexaoModel.setDb_cloud_user(obj.getString("user"));
-                conexaoModel.setDb_cloud_password(obj.getString("password"));
-                conexaoModel.setFl_admin(true);
-                conexaoModel.setIdUsuario(idUsuario);
-                repository.save(conexaoModel);
-
-            } else {
-                Conexao conexaoModel = conexaoModelOptional.get();
-                conexaoModel.setDb_cloud_host(obj.getString("host"));
-                conexaoModel.setDb_cloud_port(obj.getString("port"));
-                conexaoModel.setDb_cloud_user(obj.getString("user"));
-                conexaoModel.setDb_cloud_password(obj.getString("password"));
-                conexaoModel.setFl_admin(true);
-                conexaoModel.setIdUsuario(idUsuario);
-                repository.save(conexaoModel);
+            if (conexaoModel.getNm_conexao() == null || conexaoModel.getNm_conexao().isBlank()) {
+                conexaoModel.setNm_conexao("Conexao principal");
             }
 
-            return ResponseEntity.ok("Certificado válido e processado com sucesso.");
+            desmarcarPadrao(idEmpresa, conexaoModel.getId());
+            repository.save(conexaoModel);
+            ConexaoBanco.fecharTodos();
+
+            return ResponseEntity.ok("Certificado valido e processado com sucesso.");
 
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
@@ -216,18 +274,97 @@ public class ConexaoController {
 
     @GetMapping(value = "/certificado", produces = "application/json")
     public ResponseEntity<?> obterCertificado() throws Exception {
-
         String segredo = "wD7#G2k!91zL*qpB3VmX8eTR";
-
         Properties props = LeitorConfigSegura.carregarConfiguracao("./config.enc", segredo);
-
-        ConexaoDTO.CloudConnection cloud = new ConexaoDTO.CloudConnection();
-        cloud.setDb_cloud_host(props.getProperty("host"));
-        cloud.setDb_cloud_port(props.getProperty("port"));
-        cloud.setDb_cloud_user(props.getProperty("user"));
-        cloud.setDb_cloud_password(props.getProperty("password"));
 
         return ResponseEntity.ok(props);
     }
 
+    private Usuario resolverUsuario(String login) {
+        String idUsuarioContexto = TenantRuntimeContext.getIdUsuario();
+
+        if (idUsuarioContexto != null && !idUsuarioContexto.isBlank()) {
+            return usuarioRepository.findById(idUsuarioContexto).orElse(null);
+        }
+
+        if (login == null || login.isBlank()) {
+            return null;
+        }
+
+        return usuarioRepository.findByLogin(login);
+    }
+
+    private String resolverIdEmpresa(ConexaoDTO conexaoDTO) {
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        return idEmpresa != null && !idEmpresa.isBlank() ? idEmpresa : conexaoDTO.getId_empresa();
+    }
+
+    private String resolverIdTenant(ConexaoDTO conexaoDTO) {
+        String idTenant = TenantRuntimeContext.getIdTenant();
+        return idTenant != null && !idTenant.isBlank() ? idTenant : conexaoDTO.getId_tenant();
+    }
+
+    private Optional<Conexao> buscarConexaoDaOrganizacao(String id, String idEmpresa) {
+        if (id == null || id.isBlank()) {
+            return Optional.empty();
+        }
+
+        if (idEmpresa != null && !idEmpresa.isBlank()) {
+            return repository.findByIdAndId_empresa(id, idEmpresa);
+        }
+
+        return repository.findById(id);
+    }
+
+    private void preencherConexao(Conexao conexaoModel, ConexaoDTO conexaoDTO) {
+        if (conexaoDTO.getNm_conexao() != null) {
+            conexaoModel.setNm_conexao(conexaoDTO.getNm_conexao());
+        }
+
+        if (conexaoDTO.getCloud() != null) {
+            conexaoModel.setDb_cloud_host(conexaoDTO.getCloud().getDb_cloud_host());
+            conexaoModel.setDb_cloud_port(conexaoDTO.getCloud().getDb_cloud_port());
+            conexaoModel.setDb_cloud_user(conexaoDTO.getCloud().getDb_cloud_user());
+            conexaoModel.setDb_cloud_password(conexaoDTO.getCloud().getDb_cloud_password());
+            conexaoModel.setFl_admin(conexaoDTO.getCloud().getFl_admin());
+        }
+
+        if (conexaoDTO.getLocal() != null) {
+            conexaoModel.setDb_local_host(conexaoDTO.getLocal().getDb_local_host());
+            conexaoModel.setDb_local_port(conexaoDTO.getLocal().getDb_local_port());
+            conexaoModel.setDb_local_user(conexaoDTO.getLocal().getDb_local_user());
+            conexaoModel.setDb_local_password(conexaoDTO.getLocal().getDb_local_password());
+        }
+    }
+
+    private void desmarcarPadrao(String idEmpresa, String idIgnorado) {
+        if (idEmpresa == null || idEmpresa.isBlank()) {
+            return;
+        }
+
+        List<Conexao> conexoes = repository.findById_empresaAndFl_ativoTrue(idEmpresa);
+
+        for (Conexao conexao : conexoes) {
+            if (idIgnorado != null && idIgnorado.equals(conexao.getId())) {
+                continue;
+            }
+
+            if (Boolean.TRUE.equals(conexao.getFl_padrao())) {
+                conexao.setFl_padrao(false);
+                repository.save(conexao);
+            }
+        }
+    }
+
+    private void promoverPrimeiraConexaoAtiva(String idEmpresa) {
+        List<Conexao> conexoes = repository.findById_empresaAndFl_ativoTrue(idEmpresa);
+
+        if (conexoes.isEmpty()) {
+            return;
+        }
+
+        Conexao primeira = conexoes.get(0);
+        primeira.setFl_padrao(true);
+        repository.save(primeira);
+    }
 }

@@ -23,6 +23,11 @@ public class Conexao {
     private Boolean fl_admin;
 
     private String idUsuario;
+    private String id_empresa;
+    private String id_tenant;
+    private String nm_conexao;
+    private Boolean fl_padrao = false;
+    private Boolean fl_ativo = true;
 
     // Getters e Setters
 
@@ -101,5 +106,40 @@ public class Conexao {
     }
     public void setIdUsuario(String idUsuario) {
         this.idUsuario = idUsuario;
+    }
+
+    public String getId_empresa() {
+        return id_empresa;
+    }
+    public void setId_empresa(String id_empresa) {
+        this.id_empresa = id_empresa;
+    }
+
+    public String getId_tenant() {
+        return id_tenant;
+    }
+    public void setId_tenant(String id_tenant) {
+        this.id_tenant = id_tenant;
+    }
+
+    public String getNm_conexao() {
+        return nm_conexao;
+    }
+    public void setNm_conexao(String nm_conexao) {
+        this.nm_conexao = nm_conexao;
+    }
+
+    public Boolean getFl_padrao() {
+        return fl_padrao;
+    }
+    public void setFl_padrao(Boolean fl_padrao) {
+        this.fl_padrao = fl_padrao;
+    }
+
+    public Boolean getFl_ativo() {
+        return fl_ativo;
+    }
+    public void setFl_ativo(Boolean fl_ativo) {
+        this.fl_ativo = fl_ativo;
     }
 }

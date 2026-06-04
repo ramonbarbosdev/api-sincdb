@@ -58,14 +58,41 @@ Por enquanto, nao serao implementados:
 - migrations para remover FKs locais de identidade;
 - provisionamento de tenant.
 
+## Conexoes por organizacao
+
+`Conexao` pertence a organizacao ativa e nao mais apenas ao usuario que cadastrou.
+
+Campos principais:
+
+- `id_empresa`: organizacao central dona da conexao.
+- `id_tenant`: identificador logico do tenant/organizacao.
+- `idUsuario`: usuario que cadastrou ou atualizou a conexao.
+- `nm_conexao`: nome exibido para identificar a conexao.
+- `fl_padrao`: indica qual conexao ativa sera usada pela sincronizacao.
+- `fl_ativo`: permite desativar uma conexao sem apagar o historico.
+
+Regras:
+
+- Uma organizacao pode possuir multiplas conexoes.
+- A primeira conexao ativa criada para a organizacao vira padrao automaticamente.
+- Ao marcar uma conexao como padrao, as demais conexoes ativas da organizacao deixam de ser padrao.
+- A sincronizacao usa a conexao padrao da organizacao ativa no `TenantRuntimeContext`.
+- Existe fallback temporario para conexao antiga por usuario quando nao houver contexto de organizacao.
+
+Endpoints principais:
+
+- `POST /conexao/`: cria uma nova conexao na organizacao ativa.
+- `PUT /conexao/`: atualiza uma conexao existente da organizacao ativa.
+- `GET /conexao/{login}`: lista conexoes da organizacao ativa; sem contexto, lista as conexoes do usuario.
+- `GET /conexao/{login}/{id}`: busca uma conexao especifica.
+- `PUT /conexao/{login}/{id}/padrao`: marca uma conexao como padrao.
+- `DELETE /conexao/{login}/{id}`: desativa uma conexao.
+
 ## Proximo passo recomendado
 
-Alterar `Conexao` para pertencer a organizacao:
+Com a estrutura de organizacao e conexoes pronta, o proximo passo recomendado e ajustar as telas/front-end para:
 
-- adicionar `id_empresa`;
-- adicionar `id_tenant`;
-- permitir multiplas conexoes por organizacao;
-- marcar uma conexao como padrao;
-- fazer a sincronizacao usar a organizacao ativa do `TenantRuntimeContext`.
-
-Essa evolucao mantem a estrutura central logica e prepara o sistema para multiplas conexoes sem exigir database por tenant.
+- listar varias conexoes;
+- exibir qual conexao e padrao;
+- permitir criar, editar, remover e marcar padrao;
+- garantir que as telas de sincronizacao avisem qual conexao padrao sera usada.

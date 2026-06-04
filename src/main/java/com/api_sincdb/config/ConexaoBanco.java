@@ -1,6 +1,7 @@
 package com.api_sincdb.config;
 
 import com.api_sincdb.ApplicationContextLoad;
+import com.api_sincdb.context.TenantRuntimeContext;
 import com.api_sincdb.domain.conexao.model.Conexao;
 import com.api_sincdb.domain.conexao.repository.ConexaoRepository;
 import com.api_sincdb.domain.usuario.model.Usuario;
@@ -120,8 +121,14 @@ public class ConexaoBanco {
         String port = response.get("port");
         String user = response.get("user");
         String password = response.get("password");
+        String idEmpresa = response.get("id_empresa");
+        String idConexao = response.get("id_conexao");
 
-        String chave = database + "_" + tipo.name();
+        String chave = String.join("_",
+                idEmpresa == null || idEmpresa.isBlank() ? "sem_empresa" : idEmpresa,
+                idConexao == null || idConexao.isBlank() ? "sem_conexao" : idConexao,
+                database,
+                tipo.name());
 
         HikariDataSource dataSource = dataSourceMap.get(chave);
 
@@ -186,6 +193,8 @@ public class ConexaoBanco {
         response.put("port", port);
         response.put("user", user);
         response.put("password", password);
+        response.put("id_empresa", dados.get("id_empresa"));
+        response.put("id_conexao", dados.get("id_conexao"));
 
         return response;
     }
@@ -262,6 +271,7 @@ public class ConexaoBanco {
 
         Map<String, String> dados = new HashMap<>();
 
+        String idEmpresaContexto = TenantRuntimeContext.getIdEmpresa();
         String user = autenticacaoService.obterUsuarioLogado(token);
 
         Usuario usuario = ApplicationContextLoad.getApplicationContext()
@@ -271,11 +281,22 @@ public class ConexaoBanco {
         if (user == null)
             return dados;
 
-        Optional<Conexao> optionalConexao = Optional
-                .ofNullable(conexaoRepository.findFirstByIdUsuario(usuario.getId()));
+        Optional<Conexao> optionalConexao = Optional.empty();
+
+        if (idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
+            optionalConexao = conexaoRepository
+                    .findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(idEmpresaContexto);
+        }
+
+        if (optionalConexao.isEmpty()) {
+            optionalConexao = Optional.ofNullable(conexaoRepository.findFirstByIdUsuario(usuario.getId()));
+        }
 
         if (optionalConexao.isPresent()) {
             Conexao conexao = optionalConexao.get();
+
+            adicionarValido(dados, "id_empresa", conexao.getId_empresa());
+            adicionarValido(dados, "id_conexao", conexao.getId());
 
             if (tipo == TipoConexao.CLOUD) {
                 adicionarValido(dados, "host", conexao.getDb_cloud_host());
