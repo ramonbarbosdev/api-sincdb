@@ -26,17 +26,63 @@ As colecoes atuais funcionam como a area central da plataforma:
 
 ## Fluxo de autenticacao
 
-1. O frontend chama `POST /auth/obter-organizacao` com login e senha.
+1. O frontend chama `POST /auth/login` com `nuCpf` e `dsSenha`.
 2. A API autentica as credenciais no diretorio central.
 3. A API retorna as organizacoes ativas vinculadas ao usuario e um token temporario.
-4. O frontend chama `POST /auth/selecionar-organizacao` informando `id_tenant` e enviando o token temporario.
-5. A API valida se o tenant existe, esta ativo e pertence ao usuario.
+4. O frontend chama `POST /auth/selecionar-organizacao` informando `idOrganizacao` e enviando o token temporario no header `Authorization`.
+5. A API valida se a organizacao existe, esta ativa e pertence ao usuario.
 6. A API emite o token final com:
    - `id_usuario`;
    - `id_empresa`;
    - `id_tenant`.
 
-O endpoint antigo `POST /auth/login` permanece compativel e executa a mesma selecao de organizacao.
+Contrato do login:
+
+```json
+{
+  "nuCpf": "85778905548",
+  "dsSenha": "ramon"
+}
+```
+
+Resposta do login:
+
+```json
+{
+  "accessToken": "...",
+  "tpGlobal": "DEFAULT",
+  "precisaSelecionarOrganizacao": true,
+  "trocarSenha": false,
+  "organizacoes": [
+    {
+      "idOrganizacao": "id-mongo-da-empresa",
+      "nmOrganizacao": "Desenvolvimento",
+      "dsRole": "ROLE_DEV"
+    }
+  ]
+}
+```
+
+Contrato da selecao de organizacao:
+
+```json
+{
+  "idOrganizacao": "id-mongo-da-empresa"
+}
+```
+
+Resposta da selecao:
+
+```json
+{
+  "accessToken": "...",
+  "idOrganizacao": "id-mongo-da-empresa",
+  "dsRole": "ROLE_DEV",
+  "permissoes": []
+}
+```
+
+O endpoint antigo `POST /auth/obter-organizacao` foi removido do fluxo de autenticacao.
 
 ## Runtime de tenant
 
@@ -83,10 +129,34 @@ Endpoints principais:
 
 - `POST /conexao/`: cria uma nova conexao na organizacao ativa.
 - `PUT /conexao/`: atualiza uma conexao existente da organizacao ativa.
-- `GET /conexao/{login}`: lista conexoes da organizacao ativa; sem contexto, lista as conexoes do usuario.
-- `GET /conexao/{login}/{id}`: busca uma conexao especifica.
-- `PUT /conexao/{login}/{id}/padrao`: marca uma conexao como padrao.
-- `DELETE /conexao/{login}/{id}`: desativa uma conexao.
+- `GET /conexao`: lista conexoes da organizacao ativa.
+- `GET /conexao/{id}`: busca uma conexao especifica.
+- `PUT /conexao/{id}/padrao`: marca uma conexao como padrao.
+- `DELETE /conexao/{id}`: desativa uma conexao.
+- `POST /conexao/certificado/upload`: processa certificado criptografado e retorna os dados extraidos para preencher o formulario.
+
+O upload de certificado nao salva a conexao automaticamente. Ele apenas processa/descriptografa o arquivo e retorna:
+
+```json
+{
+  "message": "Certificado processado com sucesso",
+  "cloud": {
+    "db_cloud_host": "host-cloud",
+    "db_cloud_port": "5432",
+    "db_cloud_user": "usuario-cloud",
+    "db_cloud_password": "senha-cloud",
+    "fl_admin": true
+  },
+  "local": {
+    "db_local_host": "host-local",
+    "db_local_port": "5432",
+    "db_local_user": "usuario-local",
+    "db_local_password": "senha-local"
+  }
+}
+```
+
+Depois disso, o frontend salva a conexao pelo `POST /conexao/` ou `PUT /conexao/`.
 
 ## Proximo passo recomendado
 

@@ -1,144 +1,81 @@
 package com.api_sincdb.controller.usuario;
 
-import java.security.Principal;
-import java.util.List;
 import java.util.Map;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.api_sincdb.domain.role.model.Role;
-import com.api_sincdb.domain.usuario.dto.AuthLoginDTO;
 import com.api_sincdb.domain.usuario.dto.AuthRegisterDTO;
-import com.api_sincdb.domain.usuario.model.Usuario;
-
-import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
+import com.api_sincdb.domain.usuario.dto.LoginRequestDTO;
+import com.api_sincdb.domain.usuario.dto.LoginResponseDTO;
+import com.api_sincdb.domain.usuario.dto.MeResponseDTO;
+import com.api_sincdb.domain.usuario.dto.SelecionarOrganizacaoRequestDTO;
+import com.api_sincdb.domain.usuario.dto.SelecionarOrganizacaoResponseDTO;
 import com.api_sincdb.domain.usuario.service.AuthService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import io.swagger.v3.oas.annotations.tags.Tags;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping(value = "/auth")
-@Tag(name = "Authenticação")
+@Tag(name = "Autenticacao")
 public class AuthController {
 
-    @Autowired
-    private UsuarioRepository usuarioRepository;
+    private final AuthService service;
 
-    @Autowired
-    private AuthService service;
+    public AuthController(AuthService service) {
+        this.service = service;
+    }
 
-    @Operation(summary = "Autenticação de usuario", description = "Faz login com login e senha")
+    @Operation(summary = "Autenticacao de usuario", description = "Faz login com CPF e senha")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Autenticação aceita"),
-            @ApiResponse(responseCode = "401", description = "Não autorizado")
+            @ApiResponse(responseCode = "200", description = "Autenticacao aceita"),
+            @ApiResponse(responseCode = "401", description = "Nao autorizado")
     })
     @PostMapping(value = "/login", produces = "application/json")
-    public ResponseEntity login(@RequestBody AuthLoginDTO obj, HttpServletRequest request, HttpServletResponse response)
-            throws Exception {
-
-        try {
-
-            Map loginResponse = service.efetuarLogin(obj, response,request);
-
-            return ResponseEntity.ok().body(loginResponse);
-        } catch (Exception e) {
-            service.logout(request, response);
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
-        }
+    public ResponseEntity<LoginResponseDTO> login(@Valid @RequestBody LoginRequestDTO request) throws Exception {
+        return ResponseEntity.ok(service.login(request));
     }
 
     @PostMapping(value = "/selecionar-organizacao", produces = "application/json")
-    public ResponseEntity selecionarOrganizacao(@RequestBody AuthLoginDTO obj, HttpServletRequest request,
-            HttpServletResponse response) throws Exception {
-
-        try {
-            Map loginResponse = service.efetuarLogin(obj, response, request);
-
-            return ResponseEntity.ok().body(loginResponse);
-        } catch (Exception e) {
-            service.logout(request, response);
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
-        }
+    public ResponseEntity<SelecionarOrganizacaoResponseDTO> selecionarOrganizacao(
+            @Valid @RequestBody SelecionarOrganizacaoRequestDTO request) throws Exception {
+        return ResponseEntity.ok(service.selecionarOrganizacao(request.idOrganizacao()));
     }
 
-    @Operation(summary = "Criaçao de usuario", description = "Faz registro do usuario")
+    @GetMapping("/me")
+    public ResponseEntity<MeResponseDTO> me() throws Exception {
+        return ResponseEntity.ok(service.me());
+    }
+
+    @Operation(summary = "Criacao de usuario", description = "Faz registro do usuario")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Usuario criado"),
             @ApiResponse(responseCode = "409", description = "Usuario ja existe")
     })
     @PostMapping(value = "/register", produces = "application/json")
-    public ResponseEntity register(@RequestBody AuthRegisterDTO obj) {
-
- 
+    public ResponseEntity<?> register(@RequestBody AuthRegisterDTO obj) {
         try {
-            Map cadastroResponse = service.efetuarCadastro(  obj, null);
+            Map cadastroResponse = service.efetuarCadastro(obj, null);
             return ResponseEntity.status(HttpStatus.CREATED).body(cadastroResponse);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
         }
-
-    }
-
-     @PostMapping(value = "/obter-organizacao", produces = "application/json")
-    public ResponseEntity obterOrganizacao(@RequestBody AuthLoginDTO obj, HttpServletRequest request,
-            HttpServletResponse response) throws Exception {
-
-
-        try {
-
-            Map resposta = service.obterEmpresaVinculada(   obj );
-
-            return ResponseEntity.ok().body(resposta);
-        } catch (Exception e) {
-            service.logout(request, response);
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
-        }
-
     }
 
     @PostMapping(value = "/logout", produces = "application/json")
-    public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) throws Exception {
-
-        Boolean flLogout = service.logout(request, response);
-        if (flLogout) {
-            return ResponseEntity.ok(Map.of("message", "Logout realizado com sucesso."));
-        }
-        return ResponseEntity.status(401).body(Map.of("message", "Usuário não autenticado."));
+    public ResponseEntity<Void> logout(HttpServletRequest request, HttpServletResponse response) throws Exception {
+        service.logout(request, response);
+        return ResponseEntity.noContent().build();
     }
-
-    @GetMapping("/me")
-    public ResponseEntity<?> getCurrentUser(Authentication authentication) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Não autenticado");
-        }
-
-        var login = authentication.getPrincipal(); // normalmente UserDetails
-        Usuario user = usuarioRepository.findByLogin(String.valueOf(login));
-        return ResponseEntity
-                .ok()
-                .body(Map.of(
-                        "login", user.getLogin(),
-                        "role", user.getRoles().iterator().next().getNomeRole()));
-    }
-
 }

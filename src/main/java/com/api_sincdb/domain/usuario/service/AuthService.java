@@ -19,12 +19,17 @@ import com.api_sincdb.domain.empresa.service.EmpresaService;
 import com.api_sincdb.domain.role.model.Role;
 import com.api_sincdb.domain.role.repository.RoleRepository;
 import com.api_sincdb.domain.tenant.service.AuthDirectoryService;
-import com.api_sincdb.domain.usuario.dto.AuthLoginDTO;
 import com.api_sincdb.domain.usuario.dto.AuthRegisterDTO;
+import com.api_sincdb.domain.usuario.dto.LoginRequestDTO;
+import com.api_sincdb.domain.usuario.dto.LoginResponseDTO;
+import com.api_sincdb.domain.usuario.dto.MeResponseDTO;
+import com.api_sincdb.domain.usuario.dto.OrganizacaoLoginDTO;
+import com.api_sincdb.domain.usuario.dto.SelecionarOrganizacaoResponseDTO;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
 import com.api_sincdb.enums.TipoRole;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
+import com.api_sincdb.context.TenantRuntimeContext;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -59,55 +64,72 @@ public class AuthService {
     @Autowired(required = false)
     private SimpMessagingTemplate messagingTemplate;
 
-    public Map obterEmpresaVinculada(AuthLoginDTO obj) throws Exception {
-        Usuario usuario = authDirectoryService.autenticarCredenciais(obj.getLogin(), obj.getSenha());
-        List<Empresa> empresas = authDirectoryService.listarOrganizacoesAtivasDoUsuario(usuario.getId());
+    public LoginResponseDTO login(LoginRequestDTO request) throws Exception {
+        Usuario usuario = authDirectoryService.autenticarCredenciais(request.nuCpf(), request.dsSenha());
+        String dsRole = obterRolePrincipal(usuario);
+        List<OrganizacaoLoginDTO> organizacoes = authDirectoryService.listarOrganizacoesLogin(usuario.getId(), dsRole);
+        String token = jwtTokenAutenticacaoService.gerarTokenSemTenant(usuario, "DEFAULT");
 
-        String tempToken = jwtTokenAutenticacaoService.addAuthenticationSemTenant(usuario.getLogin());
-
-        return Map.of(
-                "tenants", empresas,
-                "tempToken", tempToken,
-                "role", usuario.getRoles().iterator().next().getNomeRole());
+        return new LoginResponseDTO(
+                token,
+                "DEFAULT",
+                true,
+                false,
+                organizacoes);
     }
 
-    public Map efetuarLogin(AuthLoginDTO obj, HttpServletResponse response, HttpServletRequest request)
-            throws Exception {
+    public SelecionarOrganizacaoResponseDTO selecionarOrganizacao(String idOrganizacao) throws Exception {
+        String idUsuario = TenantRuntimeContext.getIdUsuario();
 
-        String authHeader = request.getHeader("Authorization");
-
-        if (authHeader == null || authHeader.isBlank()) {
-            throw new Exception("Token temporario ausente!");
+        if (idUsuario == null || idUsuario.isBlank()) {
+            throw new Exception("Token temporario ausente ou invalido.");
         }
 
-        String idUsuario = jwtTokenAutenticacaoService.extractLogin(authHeader);
         Usuario usuario = usuarioService.obterPorId(idUsuario);
 
-        String idTenant = obj.getId_tenant();
-        Boolean isAreaDev = obj.getIsAreaDev();
-        Empresa empresaSelecionada = authDirectoryService.validarOrganizacaoSelecionada(usuario, idTenant);
-
-        String finalToken = jwtTokenAutenticacaoService.addAuthentication(
-                response,
-                usuario.getLogin(),
-                empresaSelecionada.getId_tenant(),
-                empresaSelecionada.getId());
-
-        onlineService.adicionarUsuario(usuario.getLogin());
-
-        if (messagingTemplate != null) {
-            messagingTemplate.convertAndSend("/topic/online", Map.of("login", usuario.getLogin()));
+        if (usuario == null) {
+            throw new Exception("Usuario autenticado nao encontrado.");
         }
 
-        return Map.of(
-                "login", usuario.getLogin(),
-                "nome", usuario.getNome(),
-                "role", usuario.getRoles().iterator().next().getNomeRole(),
-                "id_tenant", empresaSelecionada.getId_tenant(),
-                "id_empresa", empresaSelecionada.getId(),
-                "nm_empresa", empresaSelecionada.getNm_empresa(),
-                "token", finalToken,
-                "isAreaDev", isAreaDev != null && isAreaDev ? true : false);
+        Empresa empresa = authDirectoryService.validarOrganizacaoSelecionadaPorId(usuario, idOrganizacao);
+        String dsRole = obterRolePrincipal(usuario);
+        List<String> permissoes = List.of();
+
+        String token = jwtTokenAutenticacaoService.gerarTokenComTenant(
+                usuario,
+                empresa.getId(),
+                empresa.getId_tenant(),
+                dsRole,
+                permissoes);
+
+        return new SelecionarOrganizacaoResponseDTO(
+                token,
+                empresa.getId(),
+                dsRole,
+                permissoes);
+    }
+
+    public MeResponseDTO me() throws Exception {
+        String idUsuario = TenantRuntimeContext.getIdUsuario();
+
+        if (idUsuario == null || idUsuario.isBlank()) {
+            throw new Exception("Usuario autenticado nao encontrado.");
+        }
+
+        Usuario usuario = usuarioService.obterPorId(idUsuario);
+
+        if (usuario == null) {
+            throw new Exception("Usuario autenticado nao encontrado.");
+        }
+
+        return new MeResponseDTO(
+                usuario.getId(),
+                "DEFAULT",
+                TenantRuntimeContext.getIdEmpresa(),
+                TenantRuntimeContext.getIdEmpresa() == null ? null : obterRolePrincipal(usuario),
+                usuario.getNome(),
+                usuario.getLogin(),
+                List.of());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -216,5 +238,13 @@ public class AuthService {
         }
 
         return false;
+    }
+
+    private String obterRolePrincipal(Usuario usuario) {
+        if (usuario.getRoles() == null || usuario.getRoles().isEmpty()) {
+            return TipoRole.ROLE_USER.name();
+        }
+
+        return usuario.getRoles().iterator().next().getNomeRole();
     }
 }

@@ -3,6 +3,7 @@ package com.api_sincdb.security;
 import java.io.IOException;
 import java.security.Principal;
 import java.security.SignatureException;
+import java.util.List;
 import java.util.Date;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -87,11 +88,46 @@ public class JWTTokenAutenticacaoService {
         String jwt = Jwts.builder()
                 .setSubject(username)
                 .claim("id_usuario", usuario.getId())
+                .claim("tipoGlobal", "DEFAULT")
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
                 .signWith(secretKey, SignatureAlgorithm.HS512)
                 .compact();
 
-        return TOKEN_PREFIX + jwt;
+        return jwt;
+    }
+
+    public String gerarTokenSemTenant(Usuario usuario, String tipoGlobal) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        String jwt = Jwts.builder()
+                .setSubject(usuario.getLogin())
+                .claim("id_usuario", usuario.getId())
+                .claim("tipoGlobal", tipoGlobal)
+                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(secretKey, SignatureAlgorithm.HS512)
+                .compact();
+
+        return jwt;
+    }
+
+    public String gerarTokenComTenant(Usuario usuario, String idOrganizacao, String idTenant, String role,
+            List<String> permissoes) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        String jwt = Jwts.builder()
+                .setSubject(usuario.getLogin())
+                .claim("id_usuario", usuario.getId())
+                .claim("id_empresa", idOrganizacao)
+                .claim("id_tenant", idTenant)
+                .claim("idOrganizacao", idOrganizacao)
+                .claim("tipoGlobal", "DEFAULT")
+                .claim("role", role)
+                .claim("permissoes", permissoes)
+                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(secretKey, SignatureAlgorithm.HS512)
+                .compact();
+
+        return jwt;
     }
 
     public String obterUsuarioLogado(String token) {
@@ -144,6 +180,51 @@ public class JWTTokenAutenticacaoService {
                 .parseClaimsJws(token)
                 .getBody()
                 .get("id_empresa", String.class);
+    }
+
+    public String extractTipoGlobal(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("tipoGlobal", String.class);
+    }
+
+    public String extractRole(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("role", String.class);
+    }
+
+    public List<String> extractPermissoes(String token) {
+        SecretKeySpec secretKey = createSecretKey();
+
+        if (token.startsWith(TOKEN_PREFIX)) {
+            token = token.replace(TOKEN_PREFIX, "").trim();
+        }
+
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("permissoes", List.class);
     }
 
     public String extractSubject(String token) {

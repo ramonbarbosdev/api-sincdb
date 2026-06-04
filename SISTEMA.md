@@ -146,8 +146,11 @@ Considerando o `context-path` configurado como `/sincdb`, os endpoints ficam aba
 
 - `POST /sincdb/conexao/`: cadastra dados de conexao cloud/local.
 - `PUT /sincdb/conexao/`: atualiza dados de conexao cloud/local.
-- `GET /sincdb/conexao/{login}`: recupera conexao do usuario.
-- `POST /sincdb/conexao/certificado/upload/{login}`: processa certificado criptografado.
+- `GET /sincdb/conexao`: lista conexoes da organizacao ativa.
+- `GET /sincdb/conexao/{id}`: recupera uma conexao da organizacao ativa.
+- `PUT /sincdb/conexao/{id}/padrao`: marca uma conexao como padrao.
+- `DELETE /sincdb/conexao/{id}`: desativa uma conexao.
+- `POST /sincdb/conexao/certificado/upload`: processa certificado criptografado e retorna os dados extraidos em JSON, sem salvar a conexao automaticamente.
 - `GET /sincdb/conexao/certificado`: le configuracao criptografada local.
 
 ### Consulta de bases e schemas

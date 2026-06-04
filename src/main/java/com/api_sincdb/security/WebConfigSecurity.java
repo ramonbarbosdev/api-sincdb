@@ -38,7 +38,6 @@ public class WebConfigSecurity {
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/logout").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/auth/obter-organizacao").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/selecionar-organizacao").permitAll()
                         // .requestMatchers(HttpMethod.POST, "/usuario/perfil/").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/status/").permitAll()
