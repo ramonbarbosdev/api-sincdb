@@ -65,10 +65,6 @@ public class JWTTokenAutenticacaoService {
         String token = TOKEN_PREFIX + jwt;
         response.addHeader(HEADER_STRING, token);
 
-        ApplicationContextLoad.getApplicationContext()
-                .getBean(UsuarioRepository.class)
-                .atualizarTokenUser(jwt, username);
-
         inserirJwtCookie(jwt, response);
         liberacaoCors(response);
 
@@ -211,7 +207,7 @@ public class JWTTokenAutenticacaoService {
                             .getBean(UsuarioRepository.class)
                             .findByLogin(user);
 
-                    if (usuario != null && jwt.equalsIgnoreCase(usuario.getToken())) {
+                    if (usuario != null) {
                         return new UsernamePasswordAuthenticationToken(
                                 usuario.getLogin(),
                                 usuario.getSenha(),
