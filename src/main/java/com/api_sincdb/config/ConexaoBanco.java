@@ -271,7 +271,7 @@ public class ConexaoBanco {
 
         Map<String, String> dados = new HashMap<>();
 
-        String idEmpresaContexto = TenantRuntimeContext.getIdEmpresa();
+        String idEmpresaContexto = resolverIdEmpresaAtiva(token);
         String user = autenticacaoService.obterUsuarioLogado(token);
 
         Usuario usuario = ApplicationContextLoad.getApplicationContext()
@@ -288,7 +288,7 @@ public class ConexaoBanco {
                     .findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(idEmpresaContexto);
         }
 
-        if (optionalConexao.isEmpty()) {
+        if (optionalConexao.isEmpty() && (idEmpresaContexto == null || idEmpresaContexto.isBlank())) {
             optionalConexao = Optional.ofNullable(conexaoRepository.findFirstByIdUsuario(usuario.getId()));
         }
 
@@ -320,6 +320,24 @@ public class ConexaoBanco {
     private static void adicionarValido(Map<String, String> mapa, String chave, String valor) {
         if (valor != null && !valor.trim().isEmpty()) {
             mapa.put(chave, valor);
+        }
+    }
+
+    private String resolverIdEmpresaAtiva(String token) {
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+
+        if (idEmpresa != null && !idEmpresa.isBlank()) {
+            return idEmpresa;
+        }
+
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+
+        try {
+            return autenticacaoService.extractEmpresaId(token);
+        } catch (Exception e) {
+            return null;
         }
     }
 
