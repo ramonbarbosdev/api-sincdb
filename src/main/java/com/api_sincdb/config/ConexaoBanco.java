@@ -115,7 +115,13 @@ public class ConexaoBanco {
 
     public Connection abrirConexao(String database, TipoConexao tipo, String token) throws Exception {
 
-        Map<String, String> response = gerenciarConexao(database, tipo, false, token);
+        return abrirConexao(database, tipo, token, null);
+    }
+
+    public Connection abrirConexao(String database, TipoConexao tipo, String token, String idConexaoSelecionada)
+            throws Exception {
+
+        Map<String, String> response = gerenciarConexao(database, tipo, false, token, idConexaoSelecionada);
 
         String host = response.get("host");
         String port = response.get("port");
@@ -151,6 +157,11 @@ public class ConexaoBanco {
 
     public Map<String, String> gerenciarConexao(String database, TipoConexao tipo, Boolean form, String token)
             throws SQLException {
+        return gerenciarConexao(database, tipo, form, token, null);
+    }
+
+    public Map<String, String> gerenciarConexao(String database, TipoConexao tipo, Boolean form, String token,
+            String idConexaoSelecionada) throws SQLException {
         Map<String, String> response = new HashMap<String, String>();
 
         String host = "";
@@ -158,7 +169,7 @@ public class ConexaoBanco {
         String user = "";
         String password = "";
 
-        Map<String, String> dados = buscarDadosConexao(tipo, token);
+        Map<String, String> dados = buscarDadosConexao(tipo, token, idConexaoSelecionada);
 
         if (dados != null && dados.size() > 0) {
             if (dados == null)
@@ -268,6 +279,10 @@ public class ConexaoBanco {
     }
 
     public Map<String, String> buscarDadosConexao(TipoConexao tipo, String token) {
+        return buscarDadosConexao(tipo, token, null);
+    }
+
+    public Map<String, String> buscarDadosConexao(TipoConexao tipo, String token, String idConexaoSelecionada) {
 
         Map<String, String> dados = new HashMap<>();
 
@@ -283,7 +298,20 @@ public class ConexaoBanco {
 
         Optional<Conexao> optionalConexao = Optional.empty();
 
-        if (idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
+        if (idConexaoSelecionada != null && !idConexaoSelecionada.isBlank()
+                && idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
+            optionalConexao = conexaoRepository.findByIdAndId_empresa(idConexaoSelecionada, idEmpresaContexto)
+                    .filter(conexao -> Boolean.TRUE.equals(conexao.getFl_ativo()));
+        }
+
+        if (optionalConexao.isEmpty() && idConexaoSelecionada != null && !idConexaoSelecionada.isBlank()
+                && (idEmpresaContexto == null || idEmpresaContexto.isBlank())) {
+            optionalConexao = conexaoRepository.findById(idConexaoSelecionada)
+                    .filter(conexao -> usuario != null && usuario.getId().equals(conexao.getIdUsuario()))
+                    .filter(conexao -> Boolean.TRUE.equals(conexao.getFl_ativo()));
+        }
+
+        if (optionalConexao.isEmpty() && idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
             optionalConexao = conexaoRepository
                     .findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(idEmpresaContexto);
         }
