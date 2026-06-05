@@ -3,8 +3,10 @@ package com.api_sincdb.domain.explorador.service;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -13,13 +15,18 @@ import java.util.concurrent.CompletionException;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.domain.explorador.dto.ComparacaoSchemaResumoDTO;
 import com.api_sincdb.domain.explorador.dto.ResumoComparacaoDTO;
+import com.api_sincdb.domain.explorador.dto.TabelaComparacaoDetalheDTO;
 import com.api_sincdb.domain.explorador.dto.TabelaDetalheDTO.ColunaDetalheDTO;
+import com.api_sincdb.domain.explorador.dto.TabelaDetalheDTO.ForeignKeyDetalheDTO;
+import com.api_sincdb.domain.explorador.dto.TabelaDetalheDTO.IndiceDetalheDTO;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.BancoSnapshot;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.ColunaInfo;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.ForeignKeyInfo;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.IndiceInfo;
+import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.TabelaAssinaturaInfo;
 import com.api_sincdb.domain.explorador.metadata.PostgresMetadataReader.TabelaInfo;
 import com.api_sincdb.enums.TipoConexao;
 
@@ -32,6 +39,94 @@ public class ExploradorComparacaoService {
     public ExploradorComparacaoService(ConexaoBanco conexaoBanco, PostgresMetadataReader metadataReader) {
         this.conexaoBanco = conexaoBanco;
         this.metadataReader = metadataReader;
+    }
+
+    public ComparacaoSchemaResumoDTO compararSchemaResumo(String token, String base, String schema, String idConexao)
+            throws Exception {
+        CompletableFuture<List<TabelaAssinaturaInfo>> origemFuture = CompletableFuture.supplyAsync(
+                () -> carregarAssinaturas(token, base, schema, TipoConexao.CLOUD, idConexao));
+        CompletableFuture<List<TabelaAssinaturaInfo>> destinoFuture = CompletableFuture.supplyAsync(
+                () -> carregarAssinaturas(token, base, schema, TipoConexao.LOCAL, idConexao));
+
+        Map<String, TabelaAssinaturaInfo> origem = mapearPorId(obterFutureLista(origemFuture));
+        Map<String, TabelaAssinaturaInfo> destino = mapearPorId(obterFutureLista(destinoFuture));
+
+        Set<String> chaves = new LinkedHashSet<>();
+        chaves.addAll(origem.keySet());
+        chaves.addAll(destino.keySet());
+
+        long iguais = 0;
+        long diferentes = 0;
+        long ausentesDestino = 0;
+        long novasDestino = 0;
+
+        for (String chave : chaves) {
+            TabelaAssinaturaInfo tabelaOrigem = origem.get(chave);
+            TabelaAssinaturaInfo tabelaDestino = destino.get(chave);
+
+            if (tabelaOrigem != null && tabelaDestino == null) {
+                ausentesDestino++;
+            } else if (tabelaOrigem == null) {
+                novasDestino++;
+            } else if (Objects.equals(tabelaOrigem.assinaturaCompleta(), tabelaDestino.assinaturaCompleta())) {
+                iguais++;
+            } else {
+                diferentes++;
+            }
+        }
+
+        return new ComparacaoSchemaResumoDTO(chaves.size(), iguais, diferentes, ausentesDestino, novasDestino);
+    }
+
+    public TabelaComparacaoDetalheDTO compararTabelaDetalhe(String token, String base, String schema, String tabela,
+            String idConexao) throws Exception {
+        CompletableFuture<TabelaInfo> origemFuture = CompletableFuture.supplyAsync(
+                () -> carregarTabela(token, base, schema, tabela, TipoConexao.CLOUD, idConexao));
+        CompletableFuture<TabelaInfo> destinoFuture = CompletableFuture.supplyAsync(
+                () -> carregarTabela(token, base, schema, tabela, TipoConexao.LOCAL, idConexao));
+
+        TabelaInfo origem = obterFutureTabela(origemFuture);
+        TabelaInfo destino = obterFutureTabela(destinoFuture);
+        TableDiff diff = compararTabela(origem, destino);
+        TabelaInfo baseInfo = origem != null ? origem : destino;
+
+        List<IndiceDetalheDTO> indices = baseInfo == null ? List.of() : baseInfo.indices().stream()
+                .map(indice -> new IndiceDetalheDTO(indice.nome(), indice.colunas(), indice.unico(), diff.status()))
+                .sorted(Comparator.comparing(IndiceDetalheDTO::nome))
+                .toList();
+
+        List<ForeignKeyDetalheDTO> foreignKeys = baseInfo == null ? List.of() : baseInfo.foreignKeys().stream()
+                .map(fk -> new ForeignKeyDetalheDTO(fk.nome(), fk.coluna(), fk.tabelaReferencia(),
+                        fk.colunaReferencia(), diff.status()))
+                .sorted(Comparator.comparing(ForeignKeyDetalheDTO::nome))
+                .toList();
+
+        return new TabelaComparacaoDetalheDTO(diff.status(), diff.colunas(), indices, foreignKeys,
+                diff.observacoes(), String.join("\n", diff.sqlPreview()));
+    }
+
+    private List<TabelaAssinaturaInfo> carregarAssinaturas(String token, String base, String schema, TipoConexao tipo,
+            String idConexao) {
+        try (Connection conexao = conexaoBanco.abrirConexao(base, tipo, token, idConexao)) {
+            return metadataReader.listarAssinaturasTabelas(conexao, schema);
+        } catch (Exception e) {
+            throw new CompletionException(e);
+        }
+    }
+
+    private TabelaInfo carregarTabela(String token, String base, String schema, String tabela, TipoConexao tipo,
+            String idConexao) {
+        try (Connection conexao = conexaoBanco.abrirConexao(base, tipo, token, idConexao)) {
+            return metadataReader.carregarTabela(conexao, schema, tabela, true, true);
+        } catch (Exception e) {
+            throw new CompletionException(e);
+        }
+    }
+
+    private Map<String, TabelaAssinaturaInfo> mapearPorId(List<TabelaAssinaturaInfo> tabelas) {
+        Map<String, TabelaAssinaturaInfo> mapa = new LinkedHashMap<>();
+        tabelas.forEach(tabela -> mapa.put(tabela.id(), tabela));
+        return mapa;
     }
 
     ComparacaoBanco compararBanco(String token, String base, String schema, boolean incluirIndices, boolean incluirFks,
@@ -64,7 +159,35 @@ public class ExploradorComparacaoService {
         }
     }
 
+    private List<TabelaAssinaturaInfo> obterFutureLista(CompletableFuture<List<TabelaAssinaturaInfo>> future)
+            throws Exception {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof Exception exception) {
+                throw exception;
+            }
+            throw e;
+        }
+    }
+
+    private TabelaInfo obterFutureTabela(CompletableFuture<TabelaInfo> future) throws Exception {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof Exception exception) {
+                throw exception;
+            }
+            throw e;
+        }
+    }
+
     TableDiff compararTabela(TabelaInfo origem, TabelaInfo destino) {
+        if (origem == null && destino == null) {
+            return new TableDiff("ausente_destino", 0, 0, 0, 0, List.of("Tabela nao encontrada"),
+                    List.of(), List.of());
+        }
+
         if (origem != null && destino == null) {
             List<String> sqlPreview = List.of(gerarCreateTable(origem));
             return new TableDiff("ausente_destino", origem.colunas().size(), origem.colunas().size(),
