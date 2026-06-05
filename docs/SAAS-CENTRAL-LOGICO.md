@@ -184,3 +184,29 @@ Esse endpoint usa a conexao padrao da organizacao ativa e compara:
 - indices.
 
 O retorno e estruturado para o frontend montar arvore lateral, diagrama, painel de detalhes, cards de resumo e preview SQL.
+
+Parametros opcionais:
+
+- `incluirIndices=true|false`: quando `false`, pula leitura/comparacao de indices.
+- `incluirFks=true|false`: quando `false`, pula leitura/comparacao de foreign keys.
+- `refresh=true|false`: quando `true`, ignora o cache de metadados e consulta os bancos novamente.
+
+Para abertura rapida da tela, o frontend pode iniciar com:
+
+```text
+GET /explorador/{base}/{esquema}/comparar?incluirIndices=false&incluirFks=false
+```
+
+Para comparacao completa:
+
+```text
+GET /explorador/{base}/{esquema}/comparar
+```
+
+Para forcar atualizacao:
+
+```text
+GET /explorador/{base}/{esquema}/comparar?refresh=true
+```
+
+O backend carrega origem e destino em paralelo, usa consultas em lote no catalogo PostgreSQL e mantem cache de metadados por 5 minutos.

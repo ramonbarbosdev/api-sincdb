@@ -169,7 +169,7 @@ Considerando o `context-path` configurado como `/sincdb`, os endpoints ficam aba
 
 ### Explorador visual
 
-- `GET /sincdb/explorador/{base}/{esquema}/comparar`: compara metadados cloud/local e retorna JSON estruturado para tela visual com schemas, tabelas, colunas, indices, FKs, resumo e SQL preview.
+- `GET /sincdb/explorador/{base}/{esquema}/comparar`: compara metadados cloud/local e retorna JSON estruturado para tela visual com schemas, tabelas, colunas, indices, FKs, resumo e SQL preview. Aceita `incluirIndices`, `incluirFks` e `refresh`.
 
 ### Dados
 

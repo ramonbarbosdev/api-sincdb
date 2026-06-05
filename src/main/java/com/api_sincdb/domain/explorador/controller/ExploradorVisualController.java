@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api_sincdb.domain.explorador.dto.ExploradorVisualResponseDTO;
@@ -30,10 +31,13 @@ public class ExploradorVisualController {
     public ResponseEntity<ExploradorVisualResponseDTO> comparar(
             @PathVariable String base,
             @PathVariable String esquema,
+            @RequestParam(defaultValue = "true") boolean incluirIndices,
+            @RequestParam(defaultValue = "true") boolean incluirFks,
+            @RequestParam(defaultValue = "false") boolean refresh,
             HttpServletRequest request) throws Exception {
 
         String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
-        return ResponseEntity.ok(service.comparar(token, base, esquema));
+        return ResponseEntity.ok(service.comparar(token, base, esquema, incluirIndices, incluirFks, refresh));
     }
 }

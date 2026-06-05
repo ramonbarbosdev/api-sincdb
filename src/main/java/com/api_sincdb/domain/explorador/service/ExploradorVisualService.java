@@ -1,9 +1,11 @@
 package com.api_sincdb.domain.explorador.service;
 
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -14,6 +16,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletionException;
 
 import org.springframework.stereotype.Service;
 
@@ -34,136 +39,298 @@ import com.api_sincdb.enums.TipoConexao;
 @Service
 public class ExploradorVisualService {
 
+    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+
     private final ConexaoBanco conexaoBanco;
+    private final ConcurrentHashMap<String, CacheEntry> snapshotCache = new ConcurrentHashMap<>();
 
     public ExploradorVisualService(ConexaoBanco conexaoBanco) {
         this.conexaoBanco = conexaoBanco;
     }
 
     public ExploradorVisualResponseDTO comparar(String token, String base, String esquema) throws Exception {
-        try (Connection origem = conexaoBanco.abrirConexao(base, TipoConexao.CLOUD, token);
-                Connection destino = conexaoBanco.abrirConexao(base, TipoConexao.LOCAL, token)) {
+        return comparar(token, base, esquema, true, true, false);
+    }
 
-            BancoSnapshot origemSnapshot = carregarSnapshot(origem, esquema);
-            BancoSnapshot destinoSnapshot = carregarSnapshot(destino, esquema);
+    public ExploradorVisualResponseDTO comparar(
+            String token,
+            String base,
+            String esquema,
+            boolean incluirIndices,
+            boolean incluirFks,
+            boolean refresh) throws Exception {
 
-            ComparacaoResultado comparacao = compararSnapshots(origemSnapshot, destinoSnapshot);
+        CompletableFuture<BancoSnapshot> origemFuture = CompletableFuture.supplyAsync(
+                () -> carregarSnapshotComCache(token, base, esquema, TipoConexao.CLOUD, incluirIndices, incluirFks,
+                        refresh));
 
-            return new ExploradorVisualResponseDTO(
-                    base,
-                    esquema,
-                    LocalDateTime.now(),
-                    new AmbienteDTO("Producao Cloud", TipoConexao.CLOUD.name(), "conectado",
-                            montarSchemas(origemSnapshot)),
-                    new AmbienteDTO("Homologacao Local", TipoConexao.LOCAL.name(), "conectado",
-                            montarSchemas(destinoSnapshot)),
-                    new ComparacaoDTO(
-                            comparacao.tabelas(),
-                            comparacao.resumo(),
-                            comparacao.sqlPreview()));
+        CompletableFuture<BancoSnapshot> destinoFuture = CompletableFuture.supplyAsync(
+                () -> carregarSnapshotComCache(token, base, esquema, TipoConexao.LOCAL, incluirIndices, incluirFks,
+                        refresh));
+
+        BancoSnapshot origemSnapshot = obterFuture(origemFuture);
+        BancoSnapshot destinoSnapshot = obterFuture(destinoFuture);
+
+        ComparacaoResultado comparacao = compararSnapshots(origemSnapshot, destinoSnapshot);
+
+        return new ExploradorVisualResponseDTO(
+                base,
+                esquema,
+                LocalDateTime.now(),
+                new AmbienteDTO("Producao Cloud", TipoConexao.CLOUD.name(), "conectado",
+                        montarSchemas(origemSnapshot)),
+                new AmbienteDTO("Homologacao Local", TipoConexao.LOCAL.name(), "conectado",
+                        montarSchemas(destinoSnapshot)),
+                new ComparacaoDTO(
+                        comparacao.tabelas(),
+                        comparacao.resumo(),
+                        comparacao.sqlPreview()));
+    }
+
+    private BancoSnapshot carregarSnapshotComCache(
+            String token,
+            String base,
+            String esquema,
+            TipoConexao tipo,
+            boolean incluirIndices,
+            boolean incluirFks,
+            boolean refresh) {
+        String cacheKey = String.join("|",
+                String.valueOf(token == null ? 0 : token.hashCode()),
+                base,
+                esquema,
+                tipo.name(),
+                String.valueOf(incluirIndices),
+                String.valueOf(incluirFks));
+
+        if (!refresh) {
+            CacheEntry cacheEntry = snapshotCache.get(cacheKey);
+
+            if (cacheEntry != null && !cacheEntry.expirado()) {
+                return cacheEntry.snapshot();
+            }
+        }
+
+        try (Connection conexao = conexaoBanco.abrirConexao(base, tipo, token)) {
+            BancoSnapshot snapshot = carregarSnapshot(conexao, esquema, incluirIndices, incluirFks);
+            snapshotCache.put(cacheKey, new CacheEntry(snapshot, Instant.now().plus(CACHE_TTL)));
+            return snapshot;
+        } catch (Exception e) {
+            throw new CompletionException(e);
         }
     }
 
-    private BancoSnapshot carregarSnapshot(Connection conexao, String esquemaFiltro) throws SQLException {
-        DatabaseMetaData metaData = conexao.getMetaData();
+    private BancoSnapshot obterFuture(CompletableFuture<BancoSnapshot> future) throws Exception {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof Exception exception) {
+                throw exception;
+            }
+            throw e;
+        }
+    }
+
+    private BancoSnapshot carregarSnapshot(
+            Connection conexao,
+            String esquemaFiltro,
+            boolean incluirIndices,
+            boolean incluirFks) throws SQLException {
         Map<String, TabelaInfo> tabelas = new LinkedHashMap<>();
 
-        try (ResultSet rs = metaData.getTables(null, esquemaFiltro, "%", new String[] { "TABLE" })) {
-            while (rs.next()) {
-                String schema = rs.getString("TABLE_SCHEM");
-                String nome = rs.getString("TABLE_NAME");
+        carregarTabelas(conexao, esquemaFiltro, tabelas);
+        carregarPrimaryKeys(conexao, esquemaFiltro, tabelas);
+        carregarColunas(conexao, esquemaFiltro, tabelas);
 
-                if (schemaIgnorado(schema)) {
-                    continue;
-                }
+        if (incluirFks) {
+            carregarForeignKeys(conexao, esquemaFiltro, tabelas);
+        }
 
-                String chave = chaveTabela(schema, nome);
-                TabelaInfo tabela = new TabelaInfo(schema, nome);
-                tabela.primaryKeys().addAll(carregarPrimaryKeys(metaData, schema, nome));
-                tabela.colunas().putAll(carregarColunas(metaData, schema, nome, tabela.primaryKeys()));
-                tabela.foreignKeys().addAll(carregarForeignKeys(metaData, schema, nome));
-                tabela.indices().addAll(carregarIndices(metaData, schema, nome));
-                tabelas.put(chave, tabela);
-            }
+        if (incluirIndices) {
+            carregarIndices(conexao, esquemaFiltro, tabelas);
         }
 
         return new BancoSnapshot(tabelas);
     }
 
-    private Map<String, ColunaInfo> carregarColunas(DatabaseMetaData metaData, String schema, String tabela,
-            Set<String> primaryKeys) throws SQLException {
-        Map<String, ColunaInfo> colunas = new LinkedHashMap<>();
-
-        try (ResultSet rs = metaData.getColumns(null, schema, tabela, "%")) {
-            while (rs.next()) {
-                String nome = rs.getString("COLUMN_NAME");
-                String tipo = rs.getString("TYPE_NAME");
-                int tamanho = rs.getInt("COLUMN_SIZE");
-                boolean nullable = rs.getInt("NULLABLE") == DatabaseMetaData.columnNullable;
-
-                colunas.put(nome, new ColunaInfo(nome, tipo, tamanho, nullable, primaryKeys.contains(nome)));
-            }
-        }
-
-        return colunas;
-    }
-
-    private Set<String> carregarPrimaryKeys(DatabaseMetaData metaData, String schema, String tabela) throws SQLException {
-        Set<String> primaryKeys = new LinkedHashSet<>();
-
-        try (ResultSet rs = metaData.getPrimaryKeys(null, schema, tabela)) {
-            while (rs.next()) {
-                primaryKeys.add(rs.getString("COLUMN_NAME"));
-            }
-        }
-
-        return primaryKeys;
-    }
-
-    private List<ForeignKeyInfo> carregarForeignKeys(DatabaseMetaData metaData, String schema, String tabela)
+    private void carregarTabelas(Connection conexao, String esquemaFiltro, Map<String, TabelaInfo> tabelas)
             throws SQLException {
-        List<ForeignKeyInfo> fks = new ArrayList<>();
+        String sql = """
+                select table_schema, table_name
+                from information_schema.tables
+                where table_type = 'BASE TABLE'
+                  and table_schema not in ('pg_catalog', 'information_schema', 'pg_toast')
+                  and (? is null or table_schema = ?)
+                order by table_schema, table_name
+                """;
 
-        try (ResultSet rs = metaData.getImportedKeys(null, schema, tabela)) {
+        try (PreparedStatement stmt = conexao.prepareStatement(sql)) {
+            stmt.setString(1, valorFiltro(esquemaFiltro));
+            stmt.setString(2, valorFiltro(esquemaFiltro));
+
+            ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
-                String nome = rs.getString("FK_NAME");
-                String coluna = rs.getString("FKCOLUMN_NAME");
-                String schemaReferencia = rs.getString("PKTABLE_SCHEM");
-                String tabelaReferencia = rs.getString("PKTABLE_NAME");
-                String colunaReferencia = rs.getString("PKCOLUMN_NAME");
+                String schema = rs.getString("table_schema");
+                String nome = rs.getString("table_name");
 
-                fks.add(new ForeignKeyInfo(
-                        nome,
-                        coluna,
-                        chaveTabela(schemaReferencia, tabelaReferencia),
-                        colunaReferencia));
+                String chave = chaveTabela(schema, nome);
+                tabelas.put(chave, new TabelaInfo(schema, nome));
             }
         }
-
-        return fks;
     }
 
-    private List<IndiceInfo> carregarIndices(DatabaseMetaData metaData, String schema, String tabela) throws SQLException {
-        Map<String, IndiceBuilder> builders = new LinkedHashMap<>();
+    private void carregarColunas(Connection conexao, String esquemaFiltro, Map<String, TabelaInfo> tabelas)
+            throws SQLException {
+        String sql = """
+                select table_schema,
+                       table_name,
+                       column_name,
+                       data_type,
+                       udt_name,
+                       character_maximum_length,
+                       numeric_precision,
+                       is_nullable
+                from information_schema.columns
+                where table_schema not in ('pg_catalog', 'information_schema', 'pg_toast')
+                  and (? is null or table_schema = ?)
+                order by table_schema, table_name, ordinal_position
+                """;
 
-        try (ResultSet rs = metaData.getIndexInfo(null, schema, tabela, false, false)) {
+        try (PreparedStatement stmt = conexao.prepareStatement(sql)) {
+            stmt.setString(1, valorFiltro(esquemaFiltro));
+            stmt.setString(2, valorFiltro(esquemaFiltro));
+
+            ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
-                short tipo = rs.getShort("TYPE");
-                String nome = rs.getString("INDEX_NAME");
-                String coluna = rs.getString("COLUMN_NAME");
+                String schema = rs.getString("table_schema");
+                String tabela = rs.getString("table_name");
+                String chave = chaveTabela(schema, tabela);
+                TabelaInfo tabelaInfo = tabelas.get(chave);
 
-                if (tipo == DatabaseMetaData.tableIndexStatistic || nome == null || coluna == null) {
+                if (tabelaInfo == null) {
                     continue;
                 }
 
-                boolean unico = !rs.getBoolean("NON_UNIQUE");
-                builders.computeIfAbsent(nome, key -> new IndiceBuilder(nome, unico)).colunas().add(coluna);
+                String nome = rs.getString("column_name");
+                String tipo = resolverTipo(rs.getString("data_type"), rs.getString("udt_name"));
+                Integer tamanho = resolverTamanho(rs.getObject("character_maximum_length"),
+                        rs.getObject("numeric_precision"));
+                boolean nullable = "YES".equalsIgnoreCase(rs.getString("is_nullable"));
+
+                tabelaInfo.colunas().put(nome,
+                        new ColunaInfo(nome, tipo, tamanho, nullable, tabelaInfo.primaryKeys().contains(nome)));
             }
         }
+    }
 
-        return builders.values().stream()
-                .map(builder -> new IndiceInfo(builder.nome(), builder.colunas(), builder.unico()))
-                .toList();
+    private void carregarPrimaryKeys(Connection conexao, String esquemaFiltro, Map<String, TabelaInfo> tabelas)
+            throws SQLException {
+        String sql = """
+                select kcu.table_schema,
+                       kcu.table_name,
+                       kcu.column_name
+                from information_schema.table_constraints tc
+                join information_schema.key_column_usage kcu
+                  on kcu.constraint_name = tc.constraint_name
+                 and kcu.table_schema = tc.table_schema
+                 and kcu.table_name = tc.table_name
+                where tc.constraint_type = 'PRIMARY KEY'
+                  and kcu.table_schema not in ('pg_catalog', 'information_schema', 'pg_toast')
+                  and (? is null or kcu.table_schema = ?)
+                order by kcu.table_schema, kcu.table_name, kcu.ordinal_position
+                """;
+
+        try (PreparedStatement stmt = conexao.prepareStatement(sql)) {
+            stmt.setString(1, valorFiltro(esquemaFiltro));
+            stmt.setString(2, valorFiltro(esquemaFiltro));
+
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                String chave = chaveTabela(rs.getString("table_schema"), rs.getString("table_name"));
+                TabelaInfo tabela = tabelas.get(chave);
+
+                if (tabela != null) {
+                    tabela.primaryKeys().add(rs.getString("column_name"));
+                }
+            }
+        }
+    }
+
+    private void carregarForeignKeys(Connection conexao, String esquemaFiltro, Map<String, TabelaInfo> tabelas)
+            throws SQLException {
+        String sql = """
+                select tc.table_schema,
+                       tc.table_name,
+                       tc.constraint_name,
+                       kcu.column_name,
+                       ccu.table_schema as ref_schema,
+                       ccu.table_name as ref_table,
+                       ccu.column_name as ref_column
+                from information_schema.table_constraints tc
+                join information_schema.key_column_usage kcu
+                  on kcu.constraint_name = tc.constraint_name
+                 and kcu.table_schema = tc.table_schema
+                 and kcu.table_name = tc.table_name
+                join information_schema.constraint_column_usage ccu
+                  on ccu.constraint_name = tc.constraint_name
+                 and ccu.constraint_schema = tc.constraint_schema
+                where tc.constraint_type = 'FOREIGN KEY'
+                  and tc.table_schema not in ('pg_catalog', 'information_schema', 'pg_toast')
+                  and (? is null or tc.table_schema = ?)
+                order by tc.table_schema, tc.table_name, tc.constraint_name, kcu.ordinal_position
+                """;
+
+        try (PreparedStatement stmt = conexao.prepareStatement(sql)) {
+            stmt.setString(1, valorFiltro(esquemaFiltro));
+            stmt.setString(2, valorFiltro(esquemaFiltro));
+
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                String chave = chaveTabela(rs.getString("table_schema"), rs.getString("table_name"));
+                TabelaInfo tabela = tabelas.get(chave);
+
+                if (tabela == null) {
+                    continue;
+                }
+
+                tabela.foreignKeys().add(new ForeignKeyInfo(
+                        rs.getString("constraint_name"),
+                        rs.getString("column_name"),
+                        chaveTabela(rs.getString("ref_schema"), rs.getString("ref_table")),
+                        rs.getString("ref_column")));
+            }
+        }
+    }
+
+    private void carregarIndices(Connection conexao, String esquemaFiltro, Map<String, TabelaInfo> tabelas)
+            throws SQLException {
+        String sql = """
+                select schemaname, tablename, indexname, indexdef
+                from pg_indexes
+                where schemaname not in ('pg_catalog', 'information_schema', 'pg_toast')
+                  and (? is null or schemaname = ?)
+                order by schemaname, tablename, indexname
+                """;
+
+        try (PreparedStatement stmt = conexao.prepareStatement(sql)) {
+            stmt.setString(1, valorFiltro(esquemaFiltro));
+            stmt.setString(2, valorFiltro(esquemaFiltro));
+
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                String chave = chaveTabela(rs.getString("schemaname"), rs.getString("tablename"));
+                TabelaInfo tabela = tabelas.get(chave);
+
+                if (tabela == null) {
+                    continue;
+                }
+
+                String nome = rs.getString("indexname");
+                String indexDef = rs.getString("indexdef");
+                tabela.indices().add(new IndiceInfo(nome, extrairColunasIndice(indexDef),
+                        indexDef != null && indexDef.toUpperCase().contains("UNIQUE")));
+            }
+        }
     }
 
     private ComparacaoResultado compararSnapshots(BancoSnapshot origem, BancoSnapshot destino) {
@@ -508,6 +675,67 @@ public class ExploradorVisualService {
                 || "pg_toast".equals(schema);
     }
 
+    private String valorFiltro(String valor) {
+        return valor == null || valor.isBlank() ? null : valor;
+    }
+
+    private String resolverTipo(String dataType, String udtName) {
+        if (dataType == null || dataType.isBlank()) {
+            return udtName;
+        }
+
+        if ("USER-DEFINED".equalsIgnoreCase(dataType) && udtName != null && !udtName.isBlank()) {
+            return udtName;
+        }
+
+        return dataType;
+    }
+
+    private Integer resolverTamanho(Object characterLength, Object numericPrecision) {
+        Integer tamanho = toInteger(characterLength);
+
+        if (tamanho != null && tamanho > 0) {
+            return tamanho;
+        }
+
+        tamanho = toInteger(numericPrecision);
+
+        return tamanho != null && tamanho > 0 ? tamanho : null;
+    }
+
+    private Integer toInteger(Object valor) {
+        if (valor instanceof Number number) {
+            return number.intValue();
+        }
+
+        return null;
+    }
+
+    private List<String> extrairColunasIndice(String indexDef) {
+        if (indexDef == null || indexDef.isBlank()) {
+            return List.of();
+        }
+
+        int inicio = indexDef.indexOf('(');
+        int fim = indexDef.lastIndexOf(')');
+
+        if (inicio < 0 || fim <= inicio) {
+            return List.of();
+        }
+
+        String conteudo = indexDef.substring(inicio + 1, fim);
+        List<String> colunas = new ArrayList<>();
+
+        for (String parte : conteudo.split(",")) {
+            String coluna = parte.trim();
+            if (!coluna.isBlank()) {
+                colunas.add(coluna);
+            }
+        }
+
+        return colunas;
+    }
+
     private String chaveTabela(String schema, String tabela) {
         return schema + "." + tabela;
     }
@@ -568,6 +796,13 @@ public class ExploradorVisualService {
 
         IndiceBuilder(String nome, boolean unico) {
             this(nome, unico, new ArrayList<>());
+        }
+    }
+
+    private record CacheEntry(BancoSnapshot snapshot, Instant expiresAt) {
+
+        boolean expirado() {
+            return Instant.now().isAfter(expiresAt);
         }
     }
 
