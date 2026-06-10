@@ -49,13 +49,13 @@ public class ConexaoService {
         conexao.setId_tenant(idTenant);
         conexao.setFl_ativo(dto.getFl_ativo() == null ? true : dto.getFl_ativo());
 
-        boolean primeiraConexao = !repository.existsById_empresaAndFl_ativoTrue(idEmpresa);
+        boolean primeiraConexao = !repository.existsById_empresaAndIdUsuarioAndFl_ativoTrue(idEmpresa, user.getId());
         boolean marcarPadrao = primeiraConexao || Boolean.TRUE.equals(dto.getFl_padrao());
 
         conexao.setFl_padrao(marcarPadrao);
 
         if (marcarPadrao) {
-            desmarcarPadrao(idEmpresa, null);
+            desmarcarPadrao(idEmpresa, user.getId(), null);
         }
 
         repository.save(conexao);
@@ -65,9 +65,10 @@ public class ConexaoService {
     }
 
     public ConexaoDTO atualizar(ConexaoDTO dto) {
+        Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
 
-        Conexao conexao = buscarConexaoObrigatoria(dto.getId(), idEmpresa);
+        Conexao conexao = buscarConexaoObrigatoria(dto.getId(), idEmpresa, user.getId());
 
         Boolean flAdminNovo = dto.getCloud() != null ? dto.getCloud().getFl_admin() : null;
         Boolean flAdminAntigo = conexao.getFl_admin();
@@ -84,7 +85,7 @@ public class ConexaoService {
         }
 
         if (Boolean.TRUE.equals(dto.getFl_padrao())) {
-            desmarcarPadrao(conexao.getId_empresa(), conexao.getId());
+            desmarcarPadrao(conexao.getId_empresa(), user.getId(), conexao.getId());
             conexao.setFl_padrao(true);
         }
 
@@ -95,26 +96,29 @@ public class ConexaoService {
     }
 
     public List<ConexaoResponseDTO> listarConexoes() {
+        Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
 
-        return repository.findById_empresaAndFl_ativoTrue(idEmpresa)
+        return repository.findById_empresaAndIdUsuarioAndFl_ativoTrue(idEmpresa, user.getId())
                 .stream()
                 .map(ConexaoResponseDTO::fromEntity)
                 .toList();
     }
 
     public ConexaoDTO recuperarConexao(String id) {
+        Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
-        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa);
+        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa, user.getId());
 
         return toDTO(conexao);
     }
 
     public ConexaoDTO definirPadrao(String id) {
+        Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
-        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa);
+        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa, user.getId());
 
-        desmarcarPadrao(conexao.getId_empresa(), conexao.getId());
+        desmarcarPadrao(conexao.getId_empresa(), user.getId(), conexao.getId());
 
         conexao.setFl_padrao(true);
         repository.save(conexao);
@@ -125,8 +129,9 @@ public class ConexaoService {
     }
 
     public void remover(String id) {
+        Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
-        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa);
+        Conexao conexao = buscarConexaoObrigatoria(id, idEmpresa, user.getId());
 
         boolean eraPadrao = Boolean.TRUE.equals(conexao.getFl_padrao());
 
@@ -136,7 +141,7 @@ public class ConexaoService {
         repository.save(conexao);
 
         if (eraPadrao) {
-            promoverPrimeiraConexaoAtiva(conexao.getId_empresa());
+            promoverPrimeiraConexaoAtiva(conexao.getId_empresa(), user.getId());
         }
 
         ConexaoBanco.fecharTodos();
@@ -289,12 +294,12 @@ public class ConexaoService {
         return idTenant;
     }
 
-    private Conexao buscarConexaoObrigatoria(String id, String idEmpresa) {
+    private Conexao buscarConexaoObrigatoria(String id, String idEmpresa, String idUsuario) {
         if (id == null || id.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Id da conexao nao informado.");
         }
 
-        return repository.findByIdAndId_empresa(id, idEmpresa)
+        return repository.findByIdAndId_empresaAndIdUsuario(id, idEmpresa, idUsuario)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "Conexao nao encontrada."));
@@ -321,8 +326,8 @@ public class ConexaoService {
         }
     }
 
-    private void desmarcarPadrao(String idEmpresa, String idIgnorado) {
-        List<Conexao> conexoes = repository.findById_empresaAndFl_ativoTrue(idEmpresa);
+    private void desmarcarPadrao(String idEmpresa, String idUsuario, String idIgnorado) {
+        List<Conexao> conexoes = repository.findById_empresaAndIdUsuarioAndFl_ativoTrue(idEmpresa, idUsuario);
 
         for (Conexao conexao : conexoes) {
             if (idIgnorado != null && idIgnorado.equals(conexao.getId())) {
@@ -336,8 +341,8 @@ public class ConexaoService {
         }
     }
 
-    private void promoverPrimeiraConexaoAtiva(String idEmpresa) {
-        List<Conexao> conexoes = repository.findById_empresaAndFl_ativoTrue(idEmpresa);
+    private void promoverPrimeiraConexaoAtiva(String idEmpresa, String idUsuario) {
+        List<Conexao> conexoes = repository.findById_empresaAndIdUsuarioAndFl_ativoTrue(idEmpresa, idUsuario);
 
         if (conexoes.isEmpty()) {
             return;

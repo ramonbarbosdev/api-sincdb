@@ -12,20 +12,21 @@ import com.api_sincdb.domain.conexao.model.Conexao;
 @Repository
 public interface ConexaoRepository extends MongoRepository<Conexao, String> {
 
-   Conexao findFirstByIdUsuario(String idUsuario);
+   @Query("{ 'idUsuario': ?0, 'fl_ativo': true }")
+   Conexao findFirstByIdUsuarioAndFl_ativoTrue(String idUsuario);
 
-   List<Conexao> findByIdUsuario(String idUsuario);
+   @Query("{ 'id_empresa': ?0, 'idUsuario': ?1, 'fl_ativo': true }")
+   List<Conexao> findById_empresaAndIdUsuarioAndFl_ativoTrue(String id_empresa, String idUsuario);
 
-   @Query("{ 'id_empresa': ?0, 'fl_ativo': true }")
-   List<Conexao> findById_empresaAndFl_ativoTrue(String id_empresa);
+   @Query("{ 'id_empresa': ?0, 'idUsuario': ?1, 'fl_padrao': true, 'fl_ativo': true }")
+   Optional<Conexao> findFirstById_empresaAndIdUsuarioAndFl_padraoTrueAndFl_ativoTrue(
+         String id_empresa,
+         String idUsuario);
 
-   @Query("{ 'id_empresa': ?0, 'fl_padrao': true, 'fl_ativo': true }")
-   Optional<Conexao> findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(String id_empresa);
+   @Query("{ '_id': ?0, 'id_empresa': ?1, 'idUsuario': ?2 }")
+   Optional<Conexao> findByIdAndId_empresaAndIdUsuario(String id, String id_empresa, String idUsuario);
 
-   @Query("{ '_id': ?0, 'id_empresa': ?1 }")
-   Optional<Conexao> findByIdAndId_empresa(String id, String id_empresa);
-
-   @Query(value = "{ 'id_empresa': ?0, 'fl_ativo': true }", exists = true)
-   boolean existsById_empresaAndFl_ativoTrue(String id_empresa);
+   @Query(value = "{ 'id_empresa': ?0, 'idUsuario': ?1, 'fl_ativo': true }", exists = true)
+   boolean existsById_empresaAndIdUsuarioAndFl_ativoTrue(String id_empresa, String idUsuario);
 
 }
