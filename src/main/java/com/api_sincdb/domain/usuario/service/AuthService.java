@@ -6,11 +6,13 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.api_sincdb.domain.empresa.model.Empresa;
 import com.api_sincdb.domain.empresa.model.UsuarioEmpresa;
@@ -68,6 +70,27 @@ public class AuthService {
         Usuario usuario = authDirectoryService.autenticarCredenciais(request.nuCpf(), request.dsSenha());
         String dsRole = obterRolePrincipal(usuario);
         List<OrganizacaoLoginDTO> organizacoes = authDirectoryService.listarOrganizacoesLogin(usuario.getId(), dsRole);
+
+        if (organizacoes.size() == 1) {
+            Empresa empresa = authDirectoryService.validarOrganizacaoSelecionadaPorId(
+                    usuario,
+                    organizacoes.get(0).idOrganizacao());
+            List<String> permissoes = List.of();
+            String token = jwtTokenAutenticacaoService.gerarTokenComTenant(
+                    usuario,
+                    empresa.getId(),
+                    empresa.getId_tenant(),
+                    dsRole,
+                    permissoes);
+
+            return new LoginResponseDTO(
+                    token,
+                    "DEFAULT",
+                    false,
+                    false,
+                    organizacoes);
+        }
+
         String token = jwtTokenAutenticacaoService.gerarTokenSemTenant(usuario, "DEFAULT");
 
         return new LoginResponseDTO(
@@ -82,13 +105,13 @@ public class AuthService {
         String idUsuario = TenantRuntimeContext.getIdUsuario();
 
         if (idUsuario == null || idUsuario.isBlank()) {
-            throw new Exception("Token temporario ausente ou invalido.");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token temporario ausente ou invalido.");
         }
 
         Usuario usuario = usuarioService.obterPorId(idUsuario);
 
         if (usuario == null) {
-            throw new Exception("Usuario autenticado nao encontrado.");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario autenticado nao encontrado.");
         }
 
         Empresa empresa = authDirectoryService.validarOrganizacaoSelecionadaPorId(usuario, idOrganizacao);
