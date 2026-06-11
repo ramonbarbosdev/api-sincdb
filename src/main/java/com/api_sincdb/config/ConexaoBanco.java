@@ -90,8 +90,7 @@ public class ConexaoBanco {
 
     private static String detectarBancoDefault(String host, String port, String user, String password)
             throws Exception {
-        // lista de tentativas em ordem
-        String[] candidatos = { "postgres", "defaultdb", user };
+        String[] candidatos = { "postgres", "defaultdb", user, "template1" };
 
         for (String candidato : candidatos) {
             if (existeDatabase(host, port, user, password, candidato)) {
@@ -99,7 +98,10 @@ public class ConexaoBanco {
             }
         }
 
-        throw new RuntimeException("Nenhum banco de dados padrão encontrado!");
+        throw new RuntimeException(
+                "Conexao padrao encontrada, mas nenhum banco inicial acessivel foi localizado. "
+                        + "Informe um banco existente ou garanta acesso a postgres, defaultdb, "
+                        + user + " ou template1.");
     }
 
     private static boolean existeDatabase(String host, String port, String user, String password, String db) {
@@ -293,14 +295,15 @@ public class ConexaoBanco {
                 .getBean(UsuarioRepository.class)
                 .findByLogin(user);
 
-        if (user == null)
+        if (user == null || usuario == null)
             return dados;
 
         Optional<Conexao> optionalConexao = Optional.empty();
 
         if (idConexaoSelecionada != null && !idConexaoSelecionada.isBlank()
                 && idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
-            optionalConexao = conexaoRepository.findByIdAndId_empresa(idConexaoSelecionada, idEmpresaContexto)
+            optionalConexao = conexaoRepository
+                    .findByIdAndId_empresaAndIdUsuario(idConexaoSelecionada, idEmpresaContexto, usuario.getId())
                     .filter(conexao -> Boolean.TRUE.equals(conexao.getFl_ativo()));
         }
 
@@ -313,11 +316,13 @@ public class ConexaoBanco {
 
         if (optionalConexao.isEmpty() && idEmpresaContexto != null && !idEmpresaContexto.isBlank()) {
             optionalConexao = conexaoRepository
-                    .findFirstById_empresaAndFl_padraoTrueAndFl_ativoTrue(idEmpresaContexto);
+                    .findFirstById_empresaAndIdUsuarioAndFl_padraoTrueAndFl_ativoTrue(
+                            idEmpresaContexto,
+                            usuario.getId());
         }
 
         if (optionalConexao.isEmpty() && (idEmpresaContexto == null || idEmpresaContexto.isBlank())) {
-            optionalConexao = Optional.ofNullable(conexaoRepository.findFirstByIdUsuario(usuario.getId()));
+            optionalConexao = Optional.ofNullable(conexaoRepository.findFirstByIdUsuarioAndFl_ativoTrue(usuario.getId()));
         }
 
         if (optionalConexao.isPresent()) {
