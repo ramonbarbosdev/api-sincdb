@@ -49,6 +49,20 @@ public class ParametroMasterService {
         return mapa;
     }
 
+    public boolean parametroBooleano(String nomeChave, boolean valorPadrao) {
+        Object valor = carregarParametros().get(nomeChave);
+
+        if (valor instanceof Boolean booleano) {
+            return booleano;
+        }
+
+        if (valor instanceof String texto) {
+            return Boolean.parseBoolean(texto);
+        }
+
+        return valorPadrao;
+    }
+
     public String sequencia() throws Exception {
 
         String ultimoCodigo = repository.findTopByOrderByCodigoDesc()

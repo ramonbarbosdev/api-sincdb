@@ -26,6 +26,9 @@ public interface ConexaoRepository extends MongoRepository<Conexao, String> {
    @Query("{ '_id': ?0, 'id_empresa': ?1, 'idUsuario': ?2 }")
    Optional<Conexao> findByIdAndId_empresaAndIdUsuario(String id, String id_empresa, String idUsuario);
 
+   @Query("{ '_id': ?0, 'id_empresa': ?1 }")
+   Optional<Conexao> findByIdAndId_empresa(String id, String id_empresa);
+
    @Query(value = "{ 'id_empresa': ?0, 'idUsuario': ?1, 'fl_ativo': true }", exists = true)
    boolean existsById_empresaAndIdUsuarioAndFl_ativoTrue(String id_empresa, String idUsuario);
 
