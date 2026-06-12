@@ -103,9 +103,16 @@ public class AuthService {
 
     public SelecionarOrganizacaoResponseDTO selecionarOrganizacao(String idOrganizacao) throws Exception {
         String idUsuario = TenantRuntimeContext.getIdUsuario();
+        String idEmpresaAtual = TenantRuntimeContext.getIdEmpresa();
+        String idTenantAtual = TenantRuntimeContext.getIdTenant();
 
         if (idUsuario == null || idUsuario.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token temporario ausente ou invalido.");
+        }
+
+        if ((idEmpresaAtual != null && !idEmpresaAtual.isBlank())
+                || (idTenantAtual != null && !idTenantAtual.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Organizacao ja selecionada para este token.");
         }
 
         Usuario usuario = usuarioService.obterPorId(idUsuario);

@@ -22,22 +22,27 @@ import com.api_sincdb.domain.parametro.service.ParametroMasterService;
 import com.api_sincdb.domain.sql.dto.SqlColumnDTO;
 import com.api_sincdb.domain.sql.dto.SqlExecutionRequest;
 import com.api_sincdb.domain.sql.dto.SqlExecutionResponse;
+import com.api_sincdb.domain.sql.dto.SqlRiskResult;
 
 @Service
 public class SqlEditorService {
 
     public static final String PARAM_SQL_EDITOR_CLOUD_HABILITADO = "PARAM_SQL_EDITOR_CLOUD_HABILITADO";
+    private static final int DEFAULT_MAX_ROWS = 500;
+    private static final int MAX_ALLOWED_ROWS = 5000;
+    private static final int DEFAULT_TIMEOUT_SECONDS = 30;
+    private static final int MAX_TIMEOUT_SECONDS = 120;
 
-    private final SqlSecurityValidator sqlSecurityValidator;
+    private final SqlRiskAnalyzer sqlRiskAnalyzer;
     private final SqlHistoryService sqlHistoryService;
     private final ConexaoRepository conexaoRepository;
     private final ParametroMasterService parametroMasterService;
 
-    public SqlEditorService(SqlSecurityValidator sqlSecurityValidator,
+    public SqlEditorService(SqlRiskAnalyzer sqlRiskAnalyzer,
             SqlHistoryService sqlHistoryService,
             ConexaoRepository conexaoRepository,
             ParametroMasterService parametroMasterService) {
-        this.sqlSecurityValidator = sqlSecurityValidator;
+        this.sqlRiskAnalyzer = sqlRiskAnalyzer;
         this.sqlHistoryService = sqlHistoryService;
         this.conexaoRepository = conexaoRepository;
         this.parametroMasterService = parametroMasterService;
@@ -50,7 +55,12 @@ public class SqlEditorService {
         try {
             validarRequest(request);
             validarAmbientePermitido(request.getAmbiente());
-            sqlValidado = sqlSecurityValidator.validate(request.getSql());
+            SqlRiskResult riskResult = sqlRiskAnalyzer.analyze(request.getSql());
+            sqlValidado = riskResult.getSql();
+
+            if (riskResult.isRequiresConfirmation() && !Boolean.TRUE.equals(request.getConfirmado())) {
+                return respostaConfirmacao(riskResult);
+            }
 
             String idEmpresa = exigirContexto("Organizacao ativa nao encontrada no token.", TenantRuntimeContext.getIdEmpresa());
             String idTenant = exigirContexto("Tenant ativo nao encontrado no token.", TenantRuntimeContext.getIdTenant());
@@ -58,6 +68,8 @@ public class SqlEditorService {
 
             Conexao conexao = buscarConexao(request.getConexaoId(), idEmpresa, idTenant);
             Credenciais credenciais = resolverCredenciais(conexao, request.getAmbiente());
+            int maxRows = normalizarMaxRows(request.getMaxRows());
+            int timeoutSeconds = normalizarTimeoutSeconds(request.getTimeoutSeconds());
 
             try (Connection connection = DriverManager.getConnection(
                     jdbcUrl(credenciais.host(), credenciais.port(), request.getBase().trim()),
@@ -65,14 +77,25 @@ public class SqlEditorService {
                     credenciais.password());
                     Statement statement = connection.createStatement()) {
 
-                statement.setQueryTimeout(SqlSecurityValidator.QUERY_TIMEOUT_SECONDS);
-                statement.setMaxRows(SqlSecurityValidator.MAX_ROWS);
+                statement.setQueryTimeout(timeoutSeconds);
+                statement.setMaxRows(maxRows);
 
-                try (ResultSet resultSet = statement.executeQuery(sqlValidado)) {
-                    SqlExecutionResponse response = montarResponse(resultSet, System.currentTimeMillis() - inicio);
-                    registrarHistorico(request, sqlValidado, response.getExecutionTimeMs(), true, null);
-                    return response;
+                boolean possuiResultSet = statement.execute(sqlValidado);
+                SqlExecutionResponse response;
+
+                if (possuiResultSet) {
+                    try (ResultSet resultSet = statement.getResultSet()) {
+                        response = montarResponse(resultSet, System.currentTimeMillis() - inicio, riskResult);
+                    }
+                } else {
+                    response = montarResponseSemResultSet(
+                            statement.getUpdateCount(),
+                            System.currentTimeMillis() - inicio,
+                            riskResult);
                 }
+
+                registrarHistorico(request, sqlValidado, response.getExecutionTimeMs(), true, null);
+                return response;
             }
         } catch (ResponseStatusException e) {
             registrarHistorico(request, sqlValidado, System.currentTimeMillis() - inicio, false, e.getReason());
@@ -88,7 +111,19 @@ public class SqlEditorService {
         }
     }
 
-    private SqlExecutionResponse montarResponse(ResultSet resultSet, long executionTimeMs) throws Exception {
+    private SqlExecutionResponse respostaConfirmacao(SqlRiskResult riskResult) {
+        return new SqlExecutionResponse(
+                List.of(),
+                List.of(),
+                0,
+                0,
+                "Este comando pode alterar ou remover dados. Confirme para executar.",
+                true,
+                riskResult.getRiskLevel());
+    }
+
+    private SqlExecutionResponse montarResponse(ResultSet resultSet, long executionTimeMs,
+            SqlRiskResult riskResult) throws Exception {
         ResultSetMetaData metaData = resultSet.getMetaData();
         int totalColunas = metaData.getColumnCount();
         List<SqlColumnDTO> columns = new ArrayList<>();
@@ -106,7 +141,26 @@ public class SqlEditorService {
             rows.add(row);
         }
 
-        return new SqlExecutionResponse(columns, rows, executionTimeMs, 0, "Consulta executada com sucesso.");
+        return new SqlExecutionResponse(
+                columns,
+                rows,
+                executionTimeMs,
+                0,
+                "Consulta executada com sucesso.",
+                false,
+                riskResult.getRiskLevel());
+    }
+
+    private SqlExecutionResponse montarResponseSemResultSet(int affectedRows, long executionTimeMs,
+            SqlRiskResult riskResult) {
+        return new SqlExecutionResponse(
+                List.of(),
+                List.of(),
+                executionTimeMs,
+                Math.max(affectedRows, 0),
+                "Comando executado com sucesso.",
+                false,
+                riskResult.getRiskLevel());
     }
 
     private void validarRequest(SqlExecutionRequest request) {
@@ -197,6 +251,20 @@ public class SqlEditorService {
 
     private String jdbcUrl(String host, String port, String base) {
         return "jdbc:postgresql://" + host + ":" + port + "/" + base;
+    }
+
+    private int normalizarMaxRows(Integer maxRows) {
+        if (maxRows == null || maxRows <= 0) {
+            return DEFAULT_MAX_ROWS;
+        }
+        return Math.min(maxRows, MAX_ALLOWED_ROWS);
+    }
+
+    private int normalizarTimeoutSeconds(Integer timeoutSeconds) {
+        if (timeoutSeconds == null || timeoutSeconds <= 0) {
+            return DEFAULT_TIMEOUT_SECONDS;
+        }
+        return Math.min(timeoutSeconds, MAX_TIMEOUT_SECONDS);
     }
 
     private void registrarHistorico(SqlExecutionRequest request, String sql, long executionTimeMs,

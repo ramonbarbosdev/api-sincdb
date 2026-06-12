@@ -35,6 +35,12 @@ public class JwtApiAutenticacaoFilter extends GenericFilterBean {
             }
 
             preencherTenantRuntime(jwtService, httpRequest);
+
+            if (tokenTemporarioEmRotaProtegida(httpRequest)) {
+                escreverErroSelecaoOrganizacaoObrigatoria((HttpServletResponse) response);
+                return;
+            }
+
             chain.doFilter(request, response);
         } finally {
             TenantContext.clear();
@@ -61,5 +67,39 @@ public class JwtApiAutenticacaoFilter extends GenericFilterBean {
             TenantContext.clear();
             TenantRuntimeContext.clear();
         }
+    }
+
+    private boolean tokenTemporarioEmRotaProtegida(HttpServletRequest request) {
+        String idUsuario = TenantRuntimeContext.getIdUsuario();
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        String idTenant = TenantRuntimeContext.getIdTenant();
+
+        if (idUsuario == null || idUsuario.isBlank()) {
+            return false;
+        }
+
+        if (idEmpresa != null && !idEmpresa.isBlank() && idTenant != null && !idTenant.isBlank()) {
+            return false;
+        }
+
+        return !rotaPermitidaComTokenTemporario(request);
+    }
+
+    private boolean rotaPermitidaComTokenTemporario(HttpServletRequest request) {
+        String path = request.getServletPath();
+        String method = request.getMethod();
+
+        if ("OPTIONS".equalsIgnoreCase(method)) {
+            return true;
+        }
+
+        return "POST".equalsIgnoreCase(method) && "/auth/selecionar-organizacao".equals(path);
+    }
+
+    private void escreverErroSelecaoOrganizacaoObrigatoria(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("application/json");
+        response.getWriter().write(
+                "{\"message\":\"Selecione uma organizacao antes de acessar este recurso.\",\"status\":403}");
     }
 }

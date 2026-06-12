@@ -10,17 +10,21 @@ public class SqlExecutionResponse {
     private long executionTimeMs;
     private int affectedRows;
     private String message;
+    private boolean requiresConfirmation;
+    private String riskLevel;
 
     public SqlExecutionResponse() {
     }
 
     public SqlExecutionResponse(List<SqlColumnDTO> columns, List<Map<String, Object>> rows,
-            long executionTimeMs, int affectedRows, String message) {
+            long executionTimeMs, int affectedRows, String message, boolean requiresConfirmation, String riskLevel) {
         this.columns = columns;
         this.rows = rows;
         this.executionTimeMs = executionTimeMs;
         this.affectedRows = affectedRows;
         this.message = message;
+        this.requiresConfirmation = requiresConfirmation;
+        this.riskLevel = riskLevel;
     }
 
     public List<SqlColumnDTO> getColumns() {
@@ -61,5 +65,21 @@ public class SqlExecutionResponse {
 
     public void setMessage(String message) {
         this.message = message;
+    }
+
+    public boolean isRequiresConfirmation() {
+        return requiresConfirmation;
+    }
+
+    public void setRequiresConfirmation(boolean requiresConfirmation) {
+        this.requiresConfirmation = requiresConfirmation;
+    }
+
+    public String getRiskLevel() {
+        return riskLevel;
+    }
+
+    public void setRiskLevel(String riskLevel) {
+        this.riskLevel = riskLevel;
     }
 }

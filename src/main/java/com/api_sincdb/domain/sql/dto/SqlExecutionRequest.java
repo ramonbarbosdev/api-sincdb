@@ -16,6 +16,10 @@ public class SqlExecutionRequest {
     @NotBlank(message = "SQL nao informado.")
     private String sql;
 
+    private Integer maxRows;
+    private Integer timeoutSeconds;
+    private Boolean confirmado;
+
     public String getAmbiente() {
         return ambiente;
     }
@@ -46,5 +50,29 @@ public class SqlExecutionRequest {
 
     public void setSql(String sql) {
         this.sql = sql;
+    }
+
+    public Integer getMaxRows() {
+        return maxRows;
+    }
+
+    public void setMaxRows(Integer maxRows) {
+        this.maxRows = maxRows;
+    }
+
+    public Integer getTimeoutSeconds() {
+        return timeoutSeconds;
+    }
+
+    public void setTimeoutSeconds(Integer timeoutSeconds) {
+        this.timeoutSeconds = timeoutSeconds;
+    }
+
+    public Boolean getConfirmado() {
+        return confirmado;
+    }
+
+    public void setConfirmado(Boolean confirmado) {
+        this.confirmado = confirmado;
     }
 }
