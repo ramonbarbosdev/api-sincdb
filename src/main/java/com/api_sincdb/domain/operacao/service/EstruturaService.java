@@ -103,10 +103,10 @@ public class EstruturaService {
             sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
 
             ThreadUtils.verificarCancelamento();
-            Set<String> tabelasLocal = obterTabelas(local, database, nomeTabela);
+            Set<String> tabelasLocal = obterTabelas(local, database, esquema, nomeTabela);
 
             ThreadUtils.verificarCancelamento();
-            Set<String> tabelasCloud = obterTabelas(cloud, database, nomeTabela);
+            Set<String> tabelasCloud = obterTabelas(cloud, database, esquema, nomeTabela);
 
             ThreadUtils.verificarCancelamento();
 
@@ -386,13 +386,30 @@ public class EstruturaService {
                 }
 
                 // FK
-                String fk = databaseService.obterChaveEstrangeira(conexaoCloud, tabela);
+                String fk = databaseService.obterChavesEstrangeirasAusentes(
+                        conexaoCloud,
+                        conexaoLocal,
+                        tabela,
+                        tabelasCloud,
+                        tabelasLocal);
                 if (fk != null)
                     fks.add(fk);
 
             } else {
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
                         conexaoLocal, tabela);
+
+                String fk = databaseService.obterChavesEstrangeirasAusentes(
+                        conexaoCloud,
+                        conexaoLocal,
+                        tabela,
+                        tabelasCloud,
+                        tabelasLocal);
+                if (fk != null && !fk.isBlank()) {
+                    fks.add(fk);
+                    logPublisher.enviarLog(
+                            TerminalLog.ok("Chaves estrangeiras"));
+                }
 
                 if (resultado.hasChanges()) {
 
@@ -425,9 +442,15 @@ public class EstruturaService {
     // UTILITÁRIOS
     // ================================================================
 
-    public Set<String> obterTabelas(Connection conexao, String base, String nomeTabela)
+    public Set<String> obterTabelas(Connection conexao, String base, String esquema, String nomeTabela)
             throws InterruptedException, ExecutionException, TimeoutException {
         Set<String> tabelas = databaseService.obterTabelaMetaData(base, conexao);
+        if (esquema != null && !esquema.isBlank()) {
+            tabelas = tabelas.stream()
+                    .filter(t -> t.startsWith(esquema + "."))
+                    .collect(Collectors.toSet());
+        }
+
         if (nomeTabela != null && !nomeTabela.isBlank()) {
             return tabelas.stream()
                     .filter(t -> t.contains(nomeTabela))

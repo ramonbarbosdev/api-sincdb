@@ -450,10 +450,19 @@ public class DatabaseService {
     }
 
     public String obterChaveEstrangeira(Connection conexao, String nomeTabela) throws SQLException {
+        return obterChaveEstrangeira(conexao, nomeTabela, null, null);
+    }
+
+    public String obterChaveEstrangeira(
+            Connection conexao,
+            String nomeTabela,
+            Set<String> tabelasPlanejadas,
+            Set<String> tabelasExistentes) throws SQLException {
         String schema = utilsSync.extrairSchema(nomeTabela);
         String tabela = utilsSync.extrairTabela(nomeTabela);
 
         StringBuilder createForeignKeyScript = new StringBuilder();
+        StringBuilder pendencias = new StringBuilder();
 
         DatabaseMetaData metaData = conexao.getMetaData();
         ResultSet foreignKeyResultSet = metaData.getImportedKeys(null, schema, tabela);
@@ -466,6 +475,16 @@ public class DatabaseService {
             String foreignTableSchema = foreignKeyResultSet.getString("PKTABLE_SCHEM");
 
             if (constraintName != null && columnName != null && foreignTableName != null && foreignColumnName != null) {
+                String tabelaReferencia = foreignTableSchema + "." + foreignTableName;
+
+                if (!podeCriarForeignKey(tabelaReferencia, tabelasPlanejadas, tabelasExistentes)) {
+                    pendencias.append("-- FK pendente: ").append(nomeTabela)
+                            .append(".").append(columnName)
+                            .append(" referencia ").append(tabelaReferencia)
+                            .append(".").append(foreignColumnName)
+                            .append(". Sincronize/crie o schema referenciado e rode a estrutura novamente.\n");
+                    continue;
+                }
 
                 constraintName = constraintName.replace("-", "_");
 
@@ -480,7 +499,85 @@ public class DatabaseService {
 
         foreignKeyResultSet.close();
 
+        createForeignKeyScript.append(pendencias);
+
         return createForeignKeyScript.toString();
+    }
+
+    public String obterChavesEstrangeirasAusentes(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String nomeTabela,
+            Set<String> tabelasPlanejadas,
+            Set<String> tabelasExistentes) throws SQLException {
+        String schema = utilsSync.extrairSchema(nomeTabela);
+        String tabela = utilsSync.extrairTabela(nomeTabela);
+
+        Set<String> constraintsLocais = new HashSet<>();
+        DatabaseMetaData metaDataLocal = conexaoLocal.getMetaData();
+        try (ResultSet rsLocal = metaDataLocal.getImportedKeys(null, schema, tabela)) {
+            while (rsLocal.next()) {
+                String constraintName = rsLocal.getString("FK_NAME");
+                if (constraintName != null) {
+                    constraintsLocais.add(constraintName);
+                    constraintsLocais.add(constraintName.replace("-", "_"));
+                }
+            }
+        }
+
+        StringBuilder scripts = new StringBuilder();
+        StringBuilder pendencias = new StringBuilder();
+        DatabaseMetaData metaDataCloud = conexaoCloud.getMetaData();
+        try (ResultSet rsCloud = metaDataCloud.getImportedKeys(null, schema, tabela)) {
+            while (rsCloud.next()) {
+                String constraintName = rsCloud.getString("FK_NAME");
+                String columnName = rsCloud.getString("FKCOLUMN_NAME");
+                String foreignTableName = rsCloud.getString("PKTABLE_NAME");
+                String foreignColumnName = rsCloud.getString("PKCOLUMN_NAME");
+                String foreignTableSchema = rsCloud.getString("PKTABLE_SCHEM");
+
+                if (constraintName == null || columnName == null || foreignTableName == null
+                        || foreignColumnName == null || foreignTableSchema == null) {
+                    continue;
+                }
+
+                String constraintSql = constraintName.replace("-", "_");
+                if (constraintsLocais.contains(constraintName) || constraintsLocais.contains(constraintSql)) {
+                    continue;
+                }
+
+                String tabelaReferencia = foreignTableSchema + "." + foreignTableName;
+                if (!podeCriarForeignKey(tabelaReferencia, tabelasPlanejadas, tabelasExistentes)) {
+                    pendencias.append("-- FK pendente: ").append(nomeTabela)
+                            .append(".").append(columnName)
+                            .append(" referencia ").append(tabelaReferencia)
+                            .append(".").append(foreignColumnName)
+                            .append(". Sincronize/crie o schema referenciado e rode a estrutura novamente.\n");
+                    continue;
+                }
+
+                scripts.append("ALTER TABLE ").append(nomeTabela)
+                        .append(" ADD CONSTRAINT ").append(constraintSql)
+                        .append(" FOREIGN KEY (").append(columnName).append(")")
+                        .append(" REFERENCES ").append(tabelaReferencia)
+                        .append(" (").append(foreignColumnName).append(");\n");
+            }
+        }
+
+        scripts.append(pendencias);
+        return scripts.toString();
+    }
+
+    private boolean podeCriarForeignKey(
+            String tabelaReferencia,
+            Set<String> tabelasPlanejadas,
+            Set<String> tabelasExistentes) {
+        if (tabelasPlanejadas == null || tabelasExistentes == null) {
+            return true;
+        }
+
+        return tabelasPlanejadas.contains(tabelaReferencia)
+                || tabelasExistentes.contains(tabelaReferencia);
     }
 
     public String obterIndices(Connection conexao, String nomeTabela) throws SQLException {
