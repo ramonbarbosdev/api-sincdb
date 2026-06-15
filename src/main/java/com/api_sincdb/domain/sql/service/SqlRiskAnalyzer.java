@@ -12,7 +12,7 @@ import com.api_sincdb.domain.sql.dto.SqlRiskResult;
 @Service
 public class SqlRiskAnalyzer {
 
-    public static final int MAX_SQL_LENGTH = 20000;
+    public static final int MAX_SQL_LENGTH = 200000;
 
     private static final Pattern DANGEROUS_COMMANDS = Pattern.compile(
             "\\b(insert|update|delete|alter|create|drop|truncate)\\b",
@@ -51,6 +51,7 @@ public class SqlRiskAnalyzer {
     private String classificarRisco(String comando, String sql) {
         return switch (comando) {
             case "select", "explain" -> "LOW";
+            case "with" -> DANGEROUS_COMMANDS.matcher(sql).find() ? "HIGH" : "LOW";
             case "insert" -> "MEDIUM";
             case "update" -> contemWhere(sql) ? "MEDIUM" : "HIGH";
             case "delete" -> contemWhere(sql) ? "MEDIUM" : "HIGH";

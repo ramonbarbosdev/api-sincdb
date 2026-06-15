@@ -1,5 +1,7 @@
 package com.api_sincdb.domain.sql.dto;
 
+import java.util.Map;
+
 import jakarta.validation.constraints.NotBlank;
 
 public class SqlExecutionRequest {
@@ -19,6 +21,7 @@ public class SqlExecutionRequest {
     private Integer maxRows;
     private Integer timeoutSeconds;
     private Boolean confirmado;
+    private Map<String, Object> parametros;
 
     public String getAmbiente() {
         return ambiente;
@@ -74,5 +77,13 @@ public class SqlExecutionRequest {
 
     public void setConfirmado(Boolean confirmado) {
         this.confirmado = confirmado;
+    }
+
+    public Map<String, Object> getParametros() {
+        return parametros;
+    }
+
+    public void setParametros(Map<String, Object> parametros) {
+        this.parametros = parametros;
     }
 }

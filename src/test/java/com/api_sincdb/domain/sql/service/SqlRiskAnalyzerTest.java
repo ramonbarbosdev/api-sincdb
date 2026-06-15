@@ -24,6 +24,21 @@ class SqlRiskAnalyzerTest {
     }
 
     @Test
+    void deveClassificarCteSelectComoLow() {
+        SqlRiskResult result = analyzer.analyze("""
+                WITH parametros AS (
+                    SELECT 2026::int AS dt_ano
+                )
+                SELECT *
+                FROM parametros
+                """);
+
+        assertEquals("LOW", result.getRiskLevel());
+        assertFalse(result.isRequiresConfirmation());
+        assertEquals("with", result.getCommand());
+    }
+
+    @Test
     void deveClassificarUpdateComWhereComoMedium() {
         SqlRiskResult result = analyzer.analyze("UPDATE usuario SET nome = 'Teste' WHERE id = 1");
 
@@ -51,5 +66,22 @@ class SqlRiskAnalyzerTest {
     void deveBloquearMultiplasInstrucoesPerigosas() {
         assertThrows(ResponseStatusException.class,
                 () -> analyzer.analyze("SELECT * FROM usuario; DROP TABLE usuario;"));
+    }
+
+    @Test
+    void devePermitirSqlSelectLongoDentroDoLimite() {
+        StringBuilder sql = new StringBuilder("SELECT * FROM usuario WHERE id IN (");
+        for (int i = 0; i < 3000; i++) {
+            if (i > 0) {
+                sql.append(",");
+            }
+            sql.append(i);
+        }
+        sql.append(")");
+
+        SqlRiskResult result = analyzer.analyze(sql.toString());
+
+        assertEquals("LOW", result.getRiskLevel());
+        assertFalse(result.isRequiresConfirmation());
     }
 }

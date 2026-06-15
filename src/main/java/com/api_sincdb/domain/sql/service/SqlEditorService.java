@@ -2,13 +2,13 @@ package com.api_sincdb.domain.sql.service;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLTimeoutException;
 import java.sql.Types;
 import java.math.BigDecimal;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,6 +65,11 @@ public class SqlEditorService {
             SqlRiskResult riskResult = sqlRiskAnalyzer.analyze(request.getSql());
             sqlValidado = riskResult.getSql();
 
+            List<String> parametrosPendentes = parametrosPendentes(sqlValidado, request.getParametros());
+            if (!parametrosPendentes.isEmpty()) {
+                return respostaParametros(parametrosPendentes, riskResult);
+            }
+
             if (riskResult.isRequiresConfirmation() && !Boolean.TRUE.equals(request.getConfirmado())) {
                 return respostaConfirmacao(riskResult);
             }
@@ -82,12 +87,12 @@ public class SqlEditorService {
                     jdbcUrl(credenciais.host(), credenciais.port(), request.getBase().trim()),
                     credenciais.user(),
                     credenciais.password());
-                    Statement statement = connection.createStatement()) {
+                    PreparedStatement statement = prepararStatement(connection, sqlValidado, request.getParametros())) {
 
                 statement.setQueryTimeout(timeoutSeconds);
                 statement.setMaxRows(maxRows);
 
-                boolean possuiResultSet = statement.execute(sqlValidado);
+                boolean possuiResultSet = statement.execute();
                 SqlExecutionResponse response;
 
                 if (possuiResultSet) {
@@ -171,6 +176,125 @@ public class SqlEditorService {
                 "Consulta executada com sucesso.",
                 false,
                 riskResult.getRiskLevel());
+    }
+
+    private SqlExecutionResponse respostaParametros(List<String> parametros, SqlRiskResult riskResult) {
+        return new SqlExecutionResponse(
+                List.of(),
+                List.of(),
+                0,
+                0,
+                "Informe os parametros para executar a consulta.",
+                false,
+                true,
+                parametros,
+                riskResult.getRiskLevel());
+    }
+
+    private PreparedStatement prepararStatement(Connection connection, String sql, Map<String, Object> parametros)
+            throws SQLException {
+        SqlPreparado sqlPreparado = prepararSqlComParametrosNomeados(sql);
+        PreparedStatement statement = connection.prepareStatement(sqlPreparado.sql());
+
+        for (int i = 0; i < sqlPreparado.parametros().size(); i++) {
+            String nomeParametro = sqlPreparado.parametros().get(i);
+            if (parametros == null || !parametros.containsKey(nomeParametro)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Parametro SQL nao informado: " + nomeParametro);
+            }
+            statement.setObject(i + 1, parametros.get(nomeParametro));
+        }
+
+        return statement;
+    }
+
+    private List<String> parametrosPendentes(String sql, Map<String, Object> parametrosInformados) {
+        return prepararSqlComParametrosNomeados(sql).parametros().stream()
+                .distinct()
+                .filter(nome -> parametrosInformados == null || !parametrosInformados.containsKey(nome))
+                .toList();
+    }
+
+    private SqlPreparado prepararSqlComParametrosNomeados(String sql) {
+        StringBuilder sqlPreparado = new StringBuilder();
+        List<String> parametros = new ArrayList<>();
+        boolean emString = false;
+        boolean emComentarioLinha = false;
+        boolean emComentarioBloco = false;
+
+        for (int i = 0; i < sql.length(); i++) {
+            char atual = sql.charAt(i);
+            char proximo = i + 1 < sql.length() ? sql.charAt(i + 1) : '\0';
+            char anterior = i > 0 ? sql.charAt(i - 1) : '\0';
+
+            if (emComentarioLinha) {
+                sqlPreparado.append(atual);
+                if (atual == '\n' || atual == '\r') {
+                    emComentarioLinha = false;
+                }
+                continue;
+            }
+
+            if (emComentarioBloco) {
+                sqlPreparado.append(atual);
+                if (atual == '*' && proximo == '/') {
+                    sqlPreparado.append(proximo);
+                    i++;
+                    emComentarioBloco = false;
+                }
+                continue;
+            }
+
+            if (!emString && atual == '-' && proximo == '-') {
+                sqlPreparado.append(atual).append(proximo);
+                i++;
+                emComentarioLinha = true;
+                continue;
+            }
+
+            if (!emString && atual == '/' && proximo == '*') {
+                sqlPreparado.append(atual).append(proximo);
+                i++;
+                emComentarioBloco = true;
+                continue;
+            }
+
+            if (atual == '\'') {
+                sqlPreparado.append(atual);
+                if (emString && proximo == '\'') {
+                    sqlPreparado.append(proximo);
+                    i++;
+                } else {
+                    emString = !emString;
+                }
+                continue;
+            }
+
+            if (!emString && atual == ':' && anterior != ':' && proximo != ':' && isInicioParametro(proximo)) {
+                int inicio = i + 1;
+                int fim = inicio;
+                while (fim < sql.length() && isParteParametro(sql.charAt(fim))) {
+                    fim++;
+                }
+                parametros.add(sql.substring(inicio, fim));
+                sqlPreparado.append('?');
+                i = fim - 1;
+                continue;
+            }
+
+            sqlPreparado.append(atual);
+        }
+
+        return new SqlPreparado(sqlPreparado.toString(), parametros);
+    }
+
+    private boolean isInicioParametro(char value) {
+        return Character.isLetter(value) || value == '_';
+    }
+
+    private boolean isParteParametro(char value) {
+        return Character.isLetterOrDigit(value) || value == '_';
     }
 
     private Object valorFormatado(ResultSet resultSet, int columnIndex, int jdbcType, String typeName, int scale)
@@ -373,6 +497,9 @@ public class SqlEditorService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private record SqlPreparado(String sql, List<String> parametros) {
     }
 
     private record Credenciais(String host, String port, String user, String password) {
