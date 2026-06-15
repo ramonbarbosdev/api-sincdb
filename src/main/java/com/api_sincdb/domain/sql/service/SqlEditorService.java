@@ -4,7 +4,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.SQLTimeoutException;
+import java.sql.Types;
+import java.math.BigDecimal;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -32,6 +35,10 @@ public class SqlEditorService {
     private static final int MAX_ALLOWED_ROWS = 5000;
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
     private static final int MAX_TIMEOUT_SECONDS = 120;
+    private static final int COLUMN_MIN_WIDTH = 110;
+    private static final int COLUMN_MAX_WIDTH = 520;
+    private static final int COLUMN_CHAR_WIDTH = 8;
+    private static final int COLUMN_PADDING = 36;
 
     private final SqlRiskAnalyzer sqlRiskAnalyzer;
     private final SqlHistoryService sqlHistoryService;
@@ -126,19 +133,34 @@ public class SqlEditorService {
             SqlRiskResult riskResult) throws Exception {
         ResultSetMetaData metaData = resultSet.getMetaData();
         int totalColunas = metaData.getColumnCount();
-        List<SqlColumnDTO> columns = new ArrayList<>();
+        String[] nomes = new String[totalColunas + 1];
+        String[] tipos = new String[totalColunas + 1];
+        int[] tiposJdbc = new int[totalColunas + 1];
+        int[] escalas = new int[totalColunas + 1];
+        int[] maioresConteudos = new int[totalColunas + 1];
 
         for (int i = 1; i <= totalColunas; i++) {
-            columns.add(new SqlColumnDTO(metaData.getColumnLabel(i), metaData.getColumnTypeName(i)));
+            nomes[i] = metaData.getColumnLabel(i);
+            tipos[i] = metaData.getColumnTypeName(i);
+            tiposJdbc[i] = metaData.getColumnType(i);
+            escalas[i] = metaData.getScale(i);
+            maioresConteudos[i] = tamanhoSeguro(nomes[i]);
         }
 
         List<Map<String, Object>> rows = new ArrayList<>();
         while (resultSet.next()) {
             Map<String, Object> row = new LinkedHashMap<>();
             for (int i = 1; i <= totalColunas; i++) {
-                row.put(metaData.getColumnLabel(i), resultSet.getObject(i));
+                Object value = valorFormatado(resultSet, i, tiposJdbc[i], tipos[i], escalas[i]);
+                row.put(nomes[i], value);
+                maioresConteudos[i] = Math.max(maioresConteudos[i], tamanhoSeguro(value));
             }
             rows.add(row);
+        }
+
+        List<SqlColumnDTO> columns = new ArrayList<>();
+        for (int i = 1; i <= totalColunas; i++) {
+            columns.add(new SqlColumnDTO(nomes[i], tipos[i], calcularLargura(maioresConteudos[i], tiposJdbc[i])));
         }
 
         return new SqlExecutionResponse(
@@ -149,6 +171,68 @@ public class SqlEditorService {
                 "Consulta executada com sucesso.",
                 false,
                 riskResult.getRiskLevel());
+    }
+
+    private Object valorFormatado(ResultSet resultSet, int columnIndex, int jdbcType, String typeName, int scale)
+            throws SQLException {
+        if (isTipoDataHora(jdbcType)) {
+            return resultSet.getString(columnIndex);
+        }
+
+        if (isTipoMonetario(typeName)) {
+            return resultSet.getString(columnIndex);
+        }
+
+        if (isTipoDecimal(jdbcType)) {
+            BigDecimal value = resultSet.getBigDecimal(columnIndex);
+            if (value == null) {
+                return null;
+            }
+            if (scale > 0) {
+                return value.setScale(scale).toPlainString();
+            }
+            return value;
+        }
+
+        return resultSet.getObject(columnIndex);
+    }
+
+    private boolean isTipoDataHora(int jdbcType) {
+        return jdbcType == Types.DATE
+                || jdbcType == Types.TIME
+                || jdbcType == Types.TIME_WITH_TIMEZONE
+                || jdbcType == Types.TIMESTAMP
+                || jdbcType == Types.TIMESTAMP_WITH_TIMEZONE;
+    }
+
+    private boolean isTipoDecimal(int jdbcType) {
+        return jdbcType == Types.DECIMAL
+                || jdbcType == Types.NUMERIC;
+    }
+
+    private boolean isTipoMonetario(String typeName) {
+        return "money".equalsIgnoreCase(typeName);
+    }
+
+    private int calcularLargura(int tamanhoConteudo, int jdbcType) {
+        int largura = (tamanhoConteudo * COLUMN_CHAR_WIDTH) + COLUMN_PADDING;
+        if (isTipoTexto(jdbcType) && tamanhoConteudo > 30) {
+            largura += 60;
+        }
+        return Math.max(COLUMN_MIN_WIDTH, Math.min(COLUMN_MAX_WIDTH, largura));
+    }
+
+    private boolean isTipoTexto(int jdbcType) {
+        return jdbcType == Types.CHAR
+                || jdbcType == Types.VARCHAR
+                || jdbcType == Types.LONGVARCHAR
+                || jdbcType == Types.NCHAR
+                || jdbcType == Types.NVARCHAR
+                || jdbcType == Types.LONGNVARCHAR;
+    }
+
+    private int tamanhoSeguro(Object value) {
+        return value == null ? 0 : String.valueOf(value).length();
     }
 
     private SqlExecutionResponse montarResponseSemResultSet(int affectedRows, long executionTimeMs,
