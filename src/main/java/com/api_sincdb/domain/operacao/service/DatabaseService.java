@@ -351,17 +351,58 @@ public class DatabaseService {
             Connection conexaoLocal,
             String esquema) throws SQLException {
 
-        List<String> scripts = new ArrayList<>();
+        // Ordem por dependência (views base primeiro). DROP separado do CREATE evita que
+        // DROP ... CASCADE no meio da lista derrube views já recriadas.
+        record ViewScript(String nome, String definicao, int profundidade) {
+        }
+
+        List<ViewScript> views = new ArrayList<>();
 
         String sql = """
+                WITH RECURSIVE
+                view_base AS (
+                    SELECT
+                        c.oid,
+                        c.relname,
+                        pg_get_viewdef(c.oid, true) AS view_definition
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relkind = 'v'
+                      AND n.nspname = ?
+                ),
+                edges AS (
+                    SELECT DISTINCT
+                        r.ev_class AS dependent_oid,
+                        d.refobjid AS referenced_oid
+                    FROM pg_depend d
+                    JOIN pg_rewrite r ON r.oid = d.objid
+                    JOIN view_base dep ON dep.oid = r.ev_class
+                    JOIN view_base ref ON ref.oid = d.refobjid
+                    WHERE d.classid = 'pg_rewrite'::regclass
+                      AND d.refclassid = 'pg_class'::regclass
+                      AND d.deptype = 'n'
+                      AND r.ev_class <> d.refobjid
+                ),
+                depths AS (
+                    SELECT vb.oid, 0 AS depth
+                    FROM view_base vb
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM edges e WHERE e.dependent_oid = vb.oid
+                    )
+                    UNION ALL
+                    SELECT e.dependent_oid, d.depth + 1
+                    FROM depths d
+                    JOIN edges e ON e.referenced_oid = d.oid
+                    WHERE d.depth < 100
+                )
                 SELECT
-                    c.relname AS view_name,
-                    pg_get_viewdef(c.oid, true) AS view_definition
-                FROM pg_class c
-                JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE c.relkind = 'v'
-                  AND n.nspname = ?
-                ORDER BY c.relname
+                    vb.relname AS view_name,
+                    vb.view_definition,
+                    COALESCE(MAX(d.depth), 0) AS depth
+                FROM view_base vb
+                LEFT JOIN depths d ON d.oid = vb.oid
+                GROUP BY vb.oid, vb.relname, vb.view_definition
+                ORDER BY COALESCE(MAX(d.depth), 0), vb.relname
                 """;
 
         try (PreparedStatement ps = conexaoCloud.prepareStatement(sql)) {
@@ -371,6 +412,7 @@ public class DatabaseService {
                 while (rs.next()) {
                     String viewName = rs.getString("view_name");
                     String defView = rs.getString("view_definition");
+                    int depth = rs.getInt("depth");
 
                     if (defView == null || defView.isBlank()) {
                         System.out.println("⚠ View ignorada (definição nula): " + esquema + "." + viewName);
@@ -384,15 +426,25 @@ public class DatabaseService {
                         continue;
                     }
 
-                    String script = """
-                            DROP VIEW IF EXISTS %s.%s CASCADE;
-                            CREATE VIEW %s.%s AS
-                            %s;
-                            """.formatted(esquema, viewName, esquema, viewName, defView);
-
-                    scripts.add(script);
+                    views.add(new ViewScript(viewName, defView, depth));
                 }
             }
+        }
+
+        List<String> scripts = new ArrayList<>();
+
+        // 1) DROP das dependentes para as bases (profundidade maior primeiro)
+        for (int i = views.size() - 1; i >= 0; i--) {
+            ViewScript view = views.get(i);
+            scripts.add("DROP VIEW IF EXISTS %s.%s CASCADE;".formatted(esquema, view.nome()));
+        }
+
+        // 2) CREATE das bases para as dependentes
+        for (ViewScript view : views) {
+            scripts.add("""
+                    CREATE VIEW %s.%s AS
+                    %s;
+                    """.formatted(esquema, view.nome(), view.definicao()));
         }
 
         return scripts;
