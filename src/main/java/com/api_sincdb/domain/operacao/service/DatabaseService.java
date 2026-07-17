@@ -353,7 +353,7 @@ public class DatabaseService {
 
         // Ordem por dependência (views base primeiro). DROP separado do CREATE evita que
         // DROP ... CASCADE no meio da lista derrube views já recriadas.
-        record ViewScript(String nome, String definicao, int profundidade) {
+        record ViewScript(String nome, String definicao, int profundidade, boolean materializada) {
         }
 
         List<ViewScript> views = new ArrayList<>();
@@ -364,10 +364,11 @@ public class DatabaseService {
                     SELECT
                         c.oid,
                         c.relname,
+                        c.relkind,
                         pg_get_viewdef(c.oid, true) AS view_definition
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE c.relkind = 'v'
+                    WHERE c.relkind IN ('v', 'm')
                       AND n.nspname = ?
                 ),
                 edges AS (
@@ -397,11 +398,12 @@ public class DatabaseService {
                 )
                 SELECT
                     vb.relname AS view_name,
+                    vb.relkind,
                     vb.view_definition,
                     COALESCE(MAX(d.depth), 0) AS depth
                 FROM view_base vb
                 LEFT JOIN depths d ON d.oid = vb.oid
-                GROUP BY vb.oid, vb.relname, vb.view_definition
+                GROUP BY vb.oid, vb.relname, vb.relkind, vb.view_definition
                 ORDER BY COALESCE(MAX(d.depth), 0), vb.relname
                 """;
 
@@ -413,38 +415,50 @@ public class DatabaseService {
                     String viewName = rs.getString("view_name");
                     String defView = rs.getString("view_definition");
                     int depth = rs.getInt("depth");
+                    boolean materializada = "m".equals(rs.getString("relkind"));
 
                     if (defView == null || defView.isBlank()) {
                         System.out.println("⚠ View ignorada (definição nula): " + esquema + "." + viewName);
                         continue;
                     }
 
+                    // Aceita SELECT, WITH (CTE) e subselect entre parênteses
                     defView = defView.trim();
-
-                    if (!defView.regionMatches(true, 0, "select", 0, 6)) {
+                    String defLower = defView.toLowerCase();
+                    if (!(defLower.startsWith("select")
+                            || defLower.startsWith("with")
+                            || defLower.startsWith("("))) {
                         System.out.println("⚠ View ignorada (SQL inválido): " + esquema + "." + viewName);
                         continue;
                     }
 
-                    views.add(new ViewScript(viewName, defView, depth));
+                    views.add(new ViewScript(viewName, defView, depth, materializada));
                 }
             }
         }
 
         List<String> scripts = new ArrayList<>();
 
+        // Garante resolução de nomes sem schema (ex.: FROM vw_xxx) no CREATE
+        scripts.add("SET LOCAL search_path TO " + esquema + ", public, pg_catalog;");
+
         // 1) DROP das dependentes para as bases (profundidade maior primeiro)
         for (int i = views.size() - 1; i >= 0; i--) {
             ViewScript view = views.get(i);
-            scripts.add("DROP VIEW IF EXISTS %s.%s CASCADE;".formatted(esquema, view.nome()));
+            if (view.materializada()) {
+                scripts.add("DROP MATERIALIZED VIEW IF EXISTS %s.%s CASCADE;".formatted(esquema, view.nome()));
+            } else {
+                scripts.add("DROP VIEW IF EXISTS %s.%s CASCADE;".formatted(esquema, view.nome()));
+            }
         }
 
         // 2) CREATE das bases para as dependentes
         for (ViewScript view : views) {
+            String tipoCreate = view.materializada() ? "MATERIALIZED VIEW" : "VIEW";
             scripts.add("""
-                    CREATE VIEW %s.%s AS
+                    CREATE %s %s.%s AS
                     %s;
-                    """.formatted(esquema, view.nome(), view.definicao()));
+                    """.formatted(tipoCreate, esquema, view.nome(), view.definicao()));
         }
 
         return scripts;

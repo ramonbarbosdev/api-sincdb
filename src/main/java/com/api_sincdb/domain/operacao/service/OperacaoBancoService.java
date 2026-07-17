@@ -3,6 +3,7 @@ package com.api_sincdb.domain.operacao.service;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -113,6 +114,11 @@ public class OperacaoBancoService {
 
         logPublisher.enviarLog(TerminalLog.info("Executando " + tipo));
 
+        if ("Views".equals(tipo)) {
+            executarViewsComRetry(conexao, queries, detalhes, totalQueries, queriesExecutadas, continuarEmErro);
+            return;
+        }
+
         AtomicInteger ultimoProgressoEnviado = new AtomicInteger(-1);
 
         for (String query : queries) {
@@ -155,6 +161,102 @@ public class OperacaoBancoService {
 
                 continue;
             }
+        }
+    }
+
+    /**
+     * Recria views com retry: CREATE que falha por dependência ausente (42P01)
+     * é reenfileirado até a dependência existir ou não haver mais progresso.
+     */
+    private void executarViewsComRetry(
+            Connection conexao,
+            List<String> queries,
+            List<Map<String, String>> detalhes,
+            int totalQueries,
+            AtomicInteger queriesExecutadas,
+            boolean continuarEmErro) throws SQLException, IOException {
+
+        List<String> pendentes = new ArrayList<>(queries);
+        List<String> adiadas = new ArrayList<>();
+        int semProgresso = 0;
+
+        while (!pendentes.isEmpty()) {
+            adiadas.clear();
+            int criadasNestaPassagem = 0;
+
+            for (String query : pendentes) {
+                String tabela = extrairNomeTabelaDaQuery(query);
+                int progressoAtual = (int) ((queriesExecutadas.incrementAndGet() / (double) totalQueries) * 100);
+                processoService.enviarProgresso("Processando", progressoAtual,
+                        "Processando Views: " + tabela, tabela);
+
+                try (java.sql.Statement stmt = conexao.createStatement()) {
+                    stmt.execute(query);
+                    if (query.trim().toUpperCase().startsWith("CREATE")) {
+                        criadasNestaPassagem++;
+                    }
+                } catch (SQLException e) {
+                    boolean dependenciaAusente = "42P01".equals(e.getSQLState())
+                            && query.trim().toUpperCase().startsWith("CREATE");
+
+                    if (dependenciaAusente) {
+                        adiadas.add(query);
+                        continue;
+                    }
+
+                    logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (Views):"));
+                    logPublisher.enviarLog(TerminalLog.error(query));
+                    logPublisher.enviarLog(TerminalLog.error(e.getMessage() + " | SQLState: " + e.getSQLState()));
+
+                    Map<String, String> criarDetalhe = new LinkedHashMap<>();
+                    criarDetalhe.put("tabela", tabela);
+                    criarDetalhe.put("acao", "Views");
+                    criarDetalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
+                    detalhes.add(criarDetalhe);
+
+                    if (!continuarEmErro) {
+                        throw e;
+                    }
+                }
+            }
+
+            if (adiadas.isEmpty()) {
+                break;
+            }
+
+            if (criadasNestaPassagem == 0) {
+                semProgresso++;
+            } else {
+                semProgresso = 0;
+            }
+
+            // Sem progresso em 2 passagens: dependência realmente inexistente
+            if (semProgresso >= 2) {
+                for (String query : adiadas) {
+                    logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (Views):"));
+                    logPublisher.enviarLog(TerminalLog.error(query));
+                    logPublisher.enviarLog(TerminalLog.error(
+                            "Dependência ausente após retentativas | SQLState: 42P01"));
+
+                    Map<String, String> criarDetalhe = new LinkedHashMap<>();
+                    criarDetalhe.put("tabela", extrairNomeTabelaDaQuery(query));
+                    criarDetalhe.put("acao", "Views");
+                    criarDetalhe.put("erro",
+                            "Dependência ausente após retentativas | SQLState: 42P01");
+                    detalhes.add(criarDetalhe);
+
+                    if (!continuarEmErro) {
+                        throw new SQLException(
+                                "ERROR: relation dependency does not exist after retries",
+                                "42P01");
+                    }
+                }
+                break;
+            }
+
+            pendentes = new ArrayList<>(adiadas);
+            logPublisher.enviarLog(TerminalLog.warn(
+                    "Reordenando " + pendentes.size() + " views por dependência..."));
         }
     }
 
