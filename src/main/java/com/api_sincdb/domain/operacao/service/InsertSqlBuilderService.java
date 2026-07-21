@@ -21,6 +21,14 @@ public class InsertSqlBuilderService {
         ResultSetMetaData meta = rs.getMetaData();
         int colCount = meta.getColumnCount();
 
+        boolean temIdentity = false;
+        for (int i = 1; i <= colCount; i++) {
+            if (meta.isAutoIncrement(i)) {
+                temIdentity = true;
+                break;
+            }
+        }
+
         StringBuilder sql = new StringBuilder("INSERT INTO ")
                 .append(tabela)
                 .append(" (");
@@ -32,7 +40,12 @@ public class InsertSqlBuilderService {
                 sql.append(", ");
         }
 
-        sql.append(") VALUES (");
+        // Gera ALWAYS AS IDENTITY rejeita valor explícito sem OVERRIDING SYSTEM VALUE
+        sql.append(") ");
+        if (temIdentity) {
+            sql.append("OVERRIDING SYSTEM VALUE ");
+        }
+        sql.append("VALUES (");
 
         // Valores
         for (int i = 1; i <= colCount; i++) {
