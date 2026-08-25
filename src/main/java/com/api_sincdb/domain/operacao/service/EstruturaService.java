@@ -20,6 +20,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.swing.Spring;
@@ -345,6 +347,7 @@ public class EstruturaService {
         List<String> createViewsDependentes = new ArrayList<>();
 
         Set<String> schemasCriados = new HashSet<>();
+        Set<String> tabelasNovas = new HashSet<>();
 
         int totalTabelas = tabelasCloud.size();
         AtomicInteger processadas = new AtomicInteger();
@@ -366,6 +369,7 @@ public class EstruturaService {
             String schema = utilsSync.extrairSchema(tabela);
 
             if (!tabelasLocal.contains(tabela)) {
+                tabelasNovas.add(tabela);
 
                 // Criar schema, se necessário
                 if (schema != null && schemasCriados.add(schema)) {
@@ -385,31 +389,9 @@ public class EstruturaService {
                             TerminalLog.ok("Criação"));
                 }
 
-                // FK
-                String fk = databaseService.obterChavesEstrangeirasAusentes(
-                        conexaoCloud,
-                        conexaoLocal,
-                        tabela,
-                        tabelasCloud,
-                        tabelasLocal);
-                if (fk != null)
-                    fks.add(fk);
-
             } else {
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
                         conexaoLocal, tabela);
-
-                String fk = databaseService.obterChavesEstrangeirasAusentes(
-                        conexaoCloud,
-                        conexaoLocal,
-                        tabela,
-                        tabelasCloud,
-                        tabelasLocal);
-                if (fk != null && !fk.isBlank()) {
-                    fks.add(fk);
-                    logPublisher.enviarLog(
-                            TerminalLog.ok("Chaves estrangeiras"));
-                }
 
                 if (resultado.hasChanges()) {
 
@@ -428,6 +410,24 @@ public class EstruturaService {
             }
         }
 
+        Set<String> colunasPlanejadas = extrairColunasPlanejadas(alteracoes);
+        for (String tabela : tabelasCloud) {
+            List<String> fkScripts = databaseService.obterChavesEstrangeirasAusentes(
+                    conexaoCloud,
+                    conexaoLocal,
+                    tabela,
+                    tabelasCloud,
+                    tabelasLocal,
+                    colunasPlanejadas,
+                    tabelasNovas);
+            if (!fkScripts.isEmpty()) {
+                fks.addAll(fkScripts);
+            }
+        }
+        if (!fks.isEmpty()) {
+            logPublisher.enviarLog(TerminalLog.ok("Chaves estrangeiras"));
+        }
+
         tabelas.put("Schemas", criacaoSchema);
         tabelas.put("Criação de Tabelas", criacoesTabela);
         tabelas.put("DropViewsDependentes", dropViewsDependentes);
@@ -436,6 +436,24 @@ public class EstruturaService {
         tabelas.put("CreateViewsDependentes", createViewsDependentes);
 
         return tabelas;
+    }
+
+    private Set<String> extrairColunasPlanejadas(List<String> alteracoes) {
+        Set<String> colunas = new HashSet<>();
+        Pattern pattern = Pattern.compile(
+                "ALTER\\s+TABLE\\s+([\\w.]+)\\s+ADD\\s+COLUMN\\s+(\\w+)",
+                Pattern.CASE_INSENSITIVE);
+
+        for (String sql : alteracoes) {
+            if (sql == null || sql.isBlank()) {
+                continue;
+            }
+            Matcher matcher = pattern.matcher(sql);
+            if (matcher.find()) {
+                colunas.add(matcher.group(1).toLowerCase() + "." + matcher.group(2).toLowerCase());
+            }
+        }
+        return colunas;
     }
 
     // ================================================================

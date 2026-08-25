@@ -576,6 +576,25 @@ public class DatabaseService {
             String nomeTabela,
             Set<String> tabelasPlanejadas,
             Set<String> tabelasExistentes) throws SQLException {
+        List<String> scripts = obterChavesEstrangeirasAusentes(
+                conexaoCloud,
+                conexaoLocal,
+                nomeTabela,
+                tabelasPlanejadas,
+                tabelasExistentes,
+                Set.of(),
+                Set.of());
+        return String.join("\n", scripts);
+    }
+
+    public List<String> obterChavesEstrangeirasAusentes(
+            Connection conexaoCloud,
+            Connection conexaoLocal,
+            String nomeTabela,
+            Set<String> tabelasPlanejadas,
+            Set<String> tabelasExistentes,
+            Set<String> colunasPlanejadas,
+            Set<String> tabelasNovas) throws SQLException {
         String schema = utilsSync.extrairSchema(nomeTabela);
         String tabela = utilsSync.extrairTabela(nomeTabela);
 
@@ -591,8 +610,7 @@ public class DatabaseService {
             }
         }
 
-        StringBuilder scripts = new StringBuilder();
-        StringBuilder pendencias = new StringBuilder();
+        List<String> scripts = new ArrayList<>();
         DatabaseMetaData metaDataCloud = conexaoCloud.getMetaData();
         try (ResultSet rsCloud = metaDataCloud.getImportedKeys(null, schema, tabela)) {
             while (rsCloud.next()) {
@@ -614,24 +632,104 @@ public class DatabaseService {
 
                 String tabelaReferencia = foreignTableSchema + "." + foreignTableName;
                 if (!podeCriarForeignKey(tabelaReferencia, tabelasPlanejadas, tabelasExistentes)) {
-                    pendencias.append("-- FK pendente: ").append(nomeTabela)
-                            .append(".").append(columnName)
-                            .append(" referencia ").append(tabelaReferencia)
-                            .append(".").append(foreignColumnName)
-                            .append(". Sincronize/crie o schema referenciado e rode a estrutura novamente.\n");
+                    scripts.add("-- FK pendente: " + nomeTabela + "." + columnName
+                            + " referencia " + tabelaReferencia + "." + foreignColumnName
+                            + ". Sincronize/crie o schema referenciado e rode a estrutura novamente.");
                     continue;
                 }
 
-                scripts.append("ALTER TABLE ").append(nomeTabela)
-                        .append(" ADD CONSTRAINT ").append(constraintSql)
-                        .append(" FOREIGN KEY (").append(columnName).append(")")
-                        .append(" REFERENCES ").append(tabelaReferencia)
-                        .append(" (").append(foreignColumnName).append(");\n");
+                boolean tabelaFilhaNova = tabelasNovas != null && tabelasNovas.contains(nomeTabela);
+                boolean tabelaPaiNova = tabelasNovas != null && tabelasNovas.contains(tabelaReferencia);
+
+                boolean colunaFilhaOk = tabelaFilhaNova
+                        || colunaExiste(conexaoLocal, schema, tabela, columnName)
+                        || colunaPlanejada(colunasPlanejadas, nomeTabela, columnName);
+
+                boolean colunaPaiOk = tabelaPaiNova
+                        || colunaExiste(conexaoLocal, foreignTableSchema, foreignTableName, foreignColumnName)
+                        || colunaPlanejada(colunasPlanejadas, tabelaReferencia, foreignColumnName);
+
+                if (!colunaFilhaOk || !colunaPaiOk) {
+                    scripts.add("-- FK adiada: coluna ausente em " + nomeTabela + "." + columnName
+                            + " ou " + tabelaReferencia + "." + foreignColumnName
+                            + ". Execute as alterações de coluna antes da FK.");
+                    continue;
+                }
+
+                if (!tabelaPaiNova && !colunaReferenciadaUnicaOuPk(
+                        conexaoLocal, foreignTableSchema, foreignTableName, foreignColumnName)) {
+                    scripts.add("-- FK adiada: " + tabelaReferencia + "." + foreignColumnName
+                            + " não possui PRIMARY KEY ou UNIQUE no banco local.");
+                    continue;
+                }
+
+                scripts.add("ALTER TABLE " + nomeTabela
+                        + " ADD CONSTRAINT " + constraintSql
+                        + " FOREIGN KEY (" + columnName + ")"
+                        + " REFERENCES " + tabelaReferencia
+                        + " (" + foreignColumnName + ");");
             }
         }
 
-        scripts.append(pendencias);
-        return scripts.toString();
+        return scripts;
+    }
+
+    private boolean colunaPlanejada(Set<String> colunasPlanejadas, String tabela, String coluna) {
+        if (colunasPlanejadas == null || colunasPlanejadas.isEmpty()) {
+            return false;
+        }
+        String chave = tabela.toLowerCase() + "." + coluna.toLowerCase();
+        return colunasPlanejadas.contains(chave);
+    }
+
+    private boolean colunaExiste(
+            Connection conexao,
+            String schema,
+            String tabela,
+            String coluna) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = ?
+                  AND table_name = ?
+                  AND column_name = ?
+                """;
+
+        try (PreparedStatement ps = conexao.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, tabela);
+            ps.setString(3, coluna);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private boolean colunaReferenciadaUnicaOuPk(
+            Connection conexao,
+            String schema,
+            String tabela,
+            String coluna) throws SQLException {
+        String sql = """
+                SELECT 1
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_schema = kcu.constraint_schema
+                 AND tc.constraint_name = kcu.constraint_name
+                WHERE tc.table_schema = ?
+                  AND tc.table_name = ?
+                  AND kcu.column_name = ?
+                  AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+                """;
+
+        try (PreparedStatement ps = conexao.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, tabela);
+            ps.setString(3, coluna);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     private boolean podeCriarForeignKey(

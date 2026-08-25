@@ -45,8 +45,9 @@ public class EstruturaController {
 	public ResponseEntity<?> verificarEstrutura(@PathVariable(value = "base") String base,
 			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) throws InterruptedException {
 
-		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
+        String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
+		AtomicReference<Exception> erroRef = new AtomicReference<>();
 		AtomicReference<Map<String, Object>> resultadoRef = new AtomicReference<>(new LinkedHashMap<>());
 
 		processoManager.iniciarProcesso(() -> {
@@ -56,7 +57,7 @@ public class EstruturaController {
 				resultadoRef.set(resultado);
 
 			} catch (Exception e) {
-				e.printStackTrace();
+				erroRef.set(e);
 			}
 		});
 
@@ -67,6 +68,21 @@ public class EstruturaController {
 				Thread.currentThread().interrupt();
 				break;
 			}
+		}
+
+		if (erroRef.get() != null) {
+			Exception e = erroRef.get();
+			EstruturaResponse erroResponse = new EstruturaResponse();
+			erroResponse.setSucesso(false);
+			erroResponse.setBase(base);
+			erroResponse.setEsquema(esquema);
+			erroResponse.setGeradoEm(LocalDateTime.now());
+			ResumoDTO resumo = new ResumoDTO();
+			resumo.setMensagem(e.getMessage());
+			resumo.setPodeExecutar(false);
+			resumo.setPossuiOperacoesPerigosas(false);
+			erroResponse.setResumo(resumo);
+			return new ResponseEntity<>(erroResponse, HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 
 		Map<String, Object> resultado = resultadoRef.get();
