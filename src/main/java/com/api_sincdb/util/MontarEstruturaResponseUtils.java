@@ -60,6 +60,12 @@ public class MontarEstruturaResponseUtils {
             return "Objeto SQL";
 
         String s = sql.trim();
+
+        if (s.contains("|")) {
+            String[] partes = s.split("\\|", 2);
+            return partes[0] + "." + partes[1];
+        }
+
         String upper = s.toUpperCase();
 
         // CREATE SEQUENCE schema.seq

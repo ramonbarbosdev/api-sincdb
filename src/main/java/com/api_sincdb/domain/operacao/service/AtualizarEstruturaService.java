@@ -115,30 +115,34 @@ public class AtualizarEstruturaService {
                 resultado.getColunasNovas().add(nomeColuna);
                 resultado.getColunasAlteradas().add(nomeColuna);
 
-                resultado.getAlteracoes().add(
-                        String.format(
-                                "ALTER TABLE %s ADD COLUMN %s %s;",
-                                nomeTabela,
-                                nomeColuna,
-                                colunaCloud.getTipo()));
+                StringBuilder addColumn = new StringBuilder()
+                        .append("ALTER TABLE ").append(nomeTabela)
+                        .append(" ADD COLUMN ").append(nomeColuna)
+                        .append(" ").append(colunaCloud.getTipo());
 
-                if (!colunaCloud.isNullable()) {
-                    resultado.getAlteracoes().add(
-                            String.format(
-                                    "ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;",
-                                    nomeTabela,
-                                    nomeColuna));
+                // DEFAULT no ADD COLUMN preenche linhas existentes e permite NOT NULL depois
+                if (!colunaCloud.isAutoIncrement()
+                        && colunaCloud.getDefaultValor() != null
+                        && !colunaCloud.getDefaultValor().isBlank()) {
+                    addColumn.append(" DEFAULT ").append(colunaCloud.getDefaultValor());
                 }
 
-                if (!colunaCloud.isAutoIncrement()
-                        && colunaCloud.getDefaultValor() != null) {
+                addColumn.append(";");
+                resultado.getAlteracoes().add(addColumn.toString());
 
-                    resultado.getAlteracoes().add(
-                            String.format(
-                                    "ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s;",
-                                    nomeTabela,
-                                    nomeColuna,
-                                    colunaCloud.getDefaultValor()));
+                // NOT NULL exige valores — backfill automático do cloud na sincronização
+                if (!colunaCloud.isNullable()) {
+                    if (colunaCloud.isAutoIncrement()
+                            || colunaCloud.getDefaultValor() != null
+                            && !colunaCloud.getDefaultValor().isBlank()) {
+                        resultado.getAlteracoes().add(
+                                String.format(
+                                        "ALTER TABLE %s ALTER COLUMN %s SET NOT NULL;",
+                                        nomeTabela,
+                                        nomeColuna));
+                    } else {
+                        resultado.adicionarPendenteNotNull(nomeTabela, nomeColuna);
+                    }
                 }
 
                 return;
@@ -195,12 +199,15 @@ public class AtualizarEstruturaService {
 
             resultado.getColunasAlteradas().add(nomeColuna);
 
-            resultado.getAlteracoes().add(
-                    String.format(
-                            "ALTER TABLE %s ALTER COLUMN %s %s NOT NULL;",
-                            nomeTabela,
-                            nomeColuna,
-                            cloud.isNullable() ? "DROP" : "SET"));
+            if (cloud.isNullable()) {
+                resultado.getAlteracoes().add(
+                        String.format(
+                                "ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;",
+                                nomeTabela,
+                                nomeColuna));
+            } else {
+                resultado.adicionarPendenteNotNull(nomeTabela, nomeColuna);
+            }
         }
     }
 

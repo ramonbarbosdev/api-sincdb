@@ -32,15 +32,103 @@ public class OperacaoBancoService {
     @Autowired
     private ParametroMasterService parametroService;
 
+    @Autowired
+    private ColunaBackfillService colunaBackfillService;
+
+    private static final List<String> ORDEM_GRUPOS_ESTRUTURA = List.of(
+            "Schemas",
+            "Extensões",
+            "Enums",
+            "Funções",
+            "Criação de Tabelas",
+            "DropViewsDependentes",
+            "Alterações",
+            "Preenchimento de Colunas",
+            "Chaves Estrangeiras",
+            "CreateViewsDependentes",
+            "Views");
+
     private boolean grupoEhCritico(String tipo) {
         return switch (tipo) {
             case "Schemas",
                     "Criação de Tabelas",
                     "Alterações",
+                    "Preenchimento de Colunas",
                     "Chaves Estrangeiras" ->
                 true;
             default -> false;
         };
+    }
+
+    public void executarSincronizacaoEstrutura(
+            Connection conexaoLocal,
+            Connection conexaoCloud,
+            HashMap<String, List<String>> queries,
+            List<Map<String, String>> detalhes) throws IOException {
+
+        try {
+            logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
+
+            int totalQueries = queries.values().stream().mapToInt(List::size).sum();
+            AtomicInteger queriesExecutadas = new AtomicInteger(0);
+
+            Map<String, Object> parametros = parametroService.carregarParametros();
+            Boolean param = (Boolean) parametros.getOrDefault("PARAM_TOLERAR_ERROS_NAO_CRITICOS", false);
+            boolean tolerarErrosNaoCriticos = Boolean.TRUE.equals(param);
+
+            conexaoLocal.setAutoCommit(false);
+
+            for (String tipo : ORDEM_GRUPOS_ESTRUTURA) {
+                List<String> listaQueries = queries.get(tipo);
+                if (listaQueries == null || listaQueries.isEmpty()) {
+                    continue;
+                }
+
+                boolean continuarEmErro = tolerarErrosNaoCriticos && !grupoEhCritico(tipo);
+
+                if ("Preenchimento de Colunas".equals(tipo)) {
+                    colunaBackfillService.preencherColunasEApplicarNotNull(
+                            conexaoCloud,
+                            conexaoLocal,
+                            listaQueries,
+                            detalhes,
+                            totalQueries,
+                            queriesExecutadas);
+                    continue;
+                }
+
+                executarGrupoDeQueries(
+                        conexaoLocal,
+                        tipo,
+                        listaQueries,
+                        detalhes,
+                        totalQueries,
+                        queriesExecutadas,
+                        continuarEmErro);
+
+                if (!"Alterações".equals(tipo)) {
+                    conexaoLocal.commit();
+                }
+            }
+
+            logPublisher.enviarLog(TerminalLog.done("Sincronização concluída com sucesso"));
+            processoService.enviarProgresso("Concluido", 100, "Sincronização concluída com sucesso", null);
+
+        } catch (SQLException e) {
+            logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
+
+            try {
+                conexaoLocal.rollback();
+            } catch (SQLException ex) {
+                logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
+            }
+        } finally {
+            try {
+                conexaoLocal.setAutoCommit(true);
+            } catch (SQLException e) {
+                logPublisher.enviarLog(TerminalLog.error("Erro ao reativar autoCommit: " + e.getMessage()));
+            }
+        }
     }
 
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
@@ -74,7 +162,9 @@ public class OperacaoBancoService {
                         queriesExecutadas,
                         continuarEmErro);
 
-                conexao.commit();
+                if (!"Alterações".equals(tipo)) {
+                    conexao.commit();
+                }
 
             }
 
@@ -114,6 +204,8 @@ public class OperacaoBancoService {
 
         logPublisher.enviarLog(TerminalLog.info("Executando " + tipo));
 
+        boolean commitPorStatement = "Alterações".equals(tipo);
+
         if ("Views".equals(tipo)) {
             executarViewsComRetry(conexao, queries, detalhes, totalQueries, queriesExecutadas, continuarEmErro);
             return;
@@ -122,6 +214,11 @@ public class OperacaoBancoService {
         AtomicInteger ultimoProgressoEnviado = new AtomicInteger(-1);
 
         for (String query : queries) {
+
+            String trimmed = query.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) {
+                continue;
+            }
 
             String tabela = extrairNomeTabelaDaQuery(query);
 
@@ -141,6 +238,9 @@ public class OperacaoBancoService {
 
             try (java.sql.Statement stmt = conexao.createStatement()) {
                 stmt.execute(query);
+                if (commitPorStatement) {
+                    conexao.commit();
+                }
             } catch (SQLException e) {
 
                 logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (" + tipo + "):"));
@@ -154,6 +254,15 @@ public class OperacaoBancoService {
 
                 logPublisher.enviarLog(TerminalLog.error(e.getMessage() + " | SQLState: " + e.getSQLState()));
 
+                if (commitPorStatement) {
+                    try {
+                        conexao.rollback();
+                    } catch (SQLException rollbackEx) {
+                        logPublisher.enviarLog(TerminalLog.error(
+                                "Erro ao rollback após falha em alteração: " + rollbackEx.getMessage()));
+                    }
+                    continue;
+                }
 
                 if (!continuarEmErro) {
                     throw e;

@@ -20,8 +20,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.swing.Spring;
@@ -102,7 +100,12 @@ public class EstruturaService {
 
         try {
 
-            sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
+            try {
+                sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
+            } catch (Exception e) {
+                logPublisher.enviarLog(TerminalLog.warn(
+                        "Não foi possível registrar início da verificação: " + e.getMessage()));
+            }
 
             ThreadUtils.verificarCancelamento();
             Set<String> tabelasLocal = obterTabelas(local, database, esquema, nomeTabela);
@@ -133,8 +136,13 @@ public class EstruturaService {
 
             response.put("sucesso", true);
 
-            sincronizacaoSchemaService.marcarComoDesatualizado(database, esquema, usuario,
-                    "Scripts gerados para sincronização.", TipoOperacao.ESTRUTURA);
+            try {
+                sincronizacaoSchemaService.marcarComoDesatualizado(database, esquema, usuario,
+                        "Scripts gerados para sincronização.", TipoOperacao.ESTRUTURA);
+            } catch (Exception e) {
+                logPublisher.enviarLog(TerminalLog.warn(
+                        "Verificação concluída, mas falhou ao atualizar status: " + e.getMessage()));
+            }
 
         } catch (InterruptedException e) {
             Thread.interrupted();
@@ -183,7 +191,9 @@ public class EstruturaService {
                 return response;
             }
 
-            operacaoBancoService.executarQueriesEmLotes(conexaoLocal, querys, detalhes);
+            try (Connection conexaoCloud = conexaoBanco.abrirConexao(database, TipoConexao.CLOUD, token)) {
+                operacaoBancoService.executarSincronizacaoEstrutura(conexaoLocal, conexaoCloud, querys, detalhes);
+            }
 
             List<String> listaErro = new ArrayList<>();
             for (Map<String, String> erro : detalhes) {
@@ -242,6 +252,7 @@ public class EstruturaService {
         resultado.put("Criação de Tabelas", tabelas.getOrDefault("Criação de Tabelas", List.of()));
         resultado.put("DropViewsDependentes", tabelas.getOrDefault("DropViewsDependentes", List.of()));
         resultado.put("Alterações", tabelas.getOrDefault("Alterações", List.of()));
+        resultado.put("Preenchimento de Colunas", tabelas.getOrDefault("Preenchimento de Colunas", List.of()));
         resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
         resultado.put("CreateViewsDependentes", tabelas.getOrDefault("CreateViewsDependentes", List.of()));
         resultado.put("Views", infraBase.getOrDefault("Views", List.of()));
@@ -251,6 +262,7 @@ public class EstruturaService {
         processoService.enviarProgresso("Concluído", 100, "Verificação concluída.", null);
         logPublisher.enviarLog(
                 TerminalLog.done("Verificação concluída."));
+        processoService.finalizarProcesso(database);
 
         return resultado;
     }
@@ -343,11 +355,11 @@ public class EstruturaService {
         List<String> criacoesTabela = new ArrayList<>();
         List<String> fks = new ArrayList<>();
         List<String> alteracoes = new ArrayList<>();
+        List<String> preenchimentoColunas = new ArrayList<>();
         List<String> dropViewsDependentes = new ArrayList<>();
         List<String> createViewsDependentes = new ArrayList<>();
 
         Set<String> schemasCriados = new HashSet<>();
-        Set<String> tabelasNovas = new HashSet<>();
 
         int totalTabelas = tabelasCloud.size();
         AtomicInteger processadas = new AtomicInteger();
@@ -369,7 +381,6 @@ public class EstruturaService {
             String schema = utilsSync.extrairSchema(tabela);
 
             if (!tabelasLocal.contains(tabela)) {
-                tabelasNovas.add(tabela);
 
                 // Criar schema, se necessário
                 if (schema != null && schemasCriados.add(schema)) {
@@ -389,9 +400,29 @@ public class EstruturaService {
                             TerminalLog.ok("Criação"));
                 }
 
+                String fk = databaseService.obterChavesEstrangeirasAusentes(
+                        conexaoCloud,
+                        conexaoLocal,
+                        tabela,
+                        tabelasCloud,
+                        tabelasLocal);
+                if (fk != null && !fk.isBlank()) {
+                    fks.add(fk);
+                }
+
             } else {
                 ResultadoComparacao resultado = atualizarEstruturaService.compararEstruturaTabela(conexaoCloud,
                         conexaoLocal, tabela);
+
+                String fk = databaseService.obterChavesEstrangeirasAusentes(
+                        conexaoCloud,
+                        conexaoLocal,
+                        tabela,
+                        tabelasCloud,
+                        tabelasLocal);
+                if (fk != null && !fk.isBlank()) {
+                    fks.add(fk);
+                }
 
                 if (resultado.hasChanges()) {
 
@@ -400,6 +431,11 @@ public class EstruturaService {
                             dropViewsDependentes, createViewsDependentes);
 
                     alteracoes.addAll(resultado.getAlteracoes());
+
+                    for (var pendente : resultado.getColunasPendenteNotNull()) {
+                        preenchimentoColunas.add(pendente.toMarcadorCache());
+                    }
+
                     detalhes.add(new EstruturaTabela(tabela, "Atualização"));
                     logPublisher.enviarLog(
                             TerminalLog.ok("Atualização de estrutura"));
@@ -410,50 +446,15 @@ public class EstruturaService {
             }
         }
 
-        Set<String> colunasPlanejadas = extrairColunasPlanejadas(alteracoes);
-        for (String tabela : tabelasCloud) {
-            List<String> fkScripts = databaseService.obterChavesEstrangeirasAusentes(
-                    conexaoCloud,
-                    conexaoLocal,
-                    tabela,
-                    tabelasCloud,
-                    tabelasLocal,
-                    colunasPlanejadas,
-                    tabelasNovas);
-            if (!fkScripts.isEmpty()) {
-                fks.addAll(fkScripts);
-            }
-        }
-        if (!fks.isEmpty()) {
-            logPublisher.enviarLog(TerminalLog.ok("Chaves estrangeiras"));
-        }
-
         tabelas.put("Schemas", criacaoSchema);
         tabelas.put("Criação de Tabelas", criacoesTabela);
         tabelas.put("DropViewsDependentes", dropViewsDependentes);
         tabelas.put("Alterações", alteracoes);
+        tabelas.put("Preenchimento de Colunas", preenchimentoColunas);
         tabelas.put("Chaves Estrangeiras", fks);
         tabelas.put("CreateViewsDependentes", createViewsDependentes);
 
         return tabelas;
-    }
-
-    private Set<String> extrairColunasPlanejadas(List<String> alteracoes) {
-        Set<String> colunas = new HashSet<>();
-        Pattern pattern = Pattern.compile(
-                "ALTER\\s+TABLE\\s+([\\w.]+)\\s+ADD\\s+COLUMN\\s+(\\w+)",
-                Pattern.CASE_INSENSITIVE);
-
-        for (String sql : alteracoes) {
-            if (sql == null || sql.isBlank()) {
-                continue;
-            }
-            Matcher matcher = pattern.matcher(sql);
-            if (matcher.find()) {
-                colunas.add(matcher.group(1).toLowerCase() + "." + matcher.group(2).toLowerCase());
-            }
-        }
-        return colunas;
     }
 
     // ================================================================
