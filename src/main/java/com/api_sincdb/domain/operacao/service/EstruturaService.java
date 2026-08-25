@@ -238,9 +238,9 @@ public class EstruturaService {
         resultado.put("Enums", infraBase.getOrDefault("Enums", List.of()));
         // resultado.put("Sequências", infraBase.getOrDefault("Sequências", List.of()));
         resultado.put("Criação de Tabelas", tabelas.getOrDefault("Criação de Tabelas", List.of()));
-        resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
         resultado.put("DropViewsDependentes", tabelas.getOrDefault("DropViewsDependentes", List.of()));
         resultado.put("Alterações", tabelas.getOrDefault("Alterações", List.of()));
+        resultado.put("Chaves Estrangeiras", tabelas.getOrDefault("Chaves Estrangeiras", List.of()));
         resultado.put("CreateViewsDependentes", tabelas.getOrDefault("CreateViewsDependentes", List.of()));
         resultado.put("Views", infraBase.getOrDefault("Views", List.of()));
         resultado.put("Extensões", infraBase.getOrDefault("Extensões", List.of()));
