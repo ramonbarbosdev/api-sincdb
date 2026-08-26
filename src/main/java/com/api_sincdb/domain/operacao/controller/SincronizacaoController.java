@@ -1,8 +1,6 @@
 package com.api_sincdb.domain.operacao.controller;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -53,16 +51,12 @@ public class SincronizacaoController
 	}
 
     @GetMapping(value = "/verificaesquema/{base}/{esquema}", produces = "application/json")
-	public ResponseEntity<?> verificarExistenciaEsquema ( @PathVariable (value = "base") String base, @PathVariable (value = "esquema") String esquema     ) 
+	public ResponseEntity<?> verificarExistenciaEsquema (
+			@PathVariable (value = "base") String base,
+			@PathVariable (value = "esquema") String esquema)
 	{
-		List<String> esquemas = databaseService.obterSchemaUnico(base, esquema, TipoConexao.LOCAL);
-
-		if (!esquemas.isEmpty())
-		{
-			return new ResponseEntity<>(esquemas, HttpStatus.OK);
-		}
-
-		return new ResponseEntity<>(esquemas, HttpStatus.NOT_FOUND);
+		List<String> esquemas = databaseService.garantirEsquemaLocal(base, esquema);
+		return new ResponseEntity<>(esquemas, HttpStatus.OK);
 	}
 
 	

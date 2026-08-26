@@ -205,6 +205,39 @@ public class DatabaseService {
         return query;
     }
 
+    /**
+     * Garante que o schema existe no banco local, criando com CREATE SCHEMA IF NOT EXISTS quando necessário.
+     * Valida que o schema também existe no cloud antes de criar localmente.
+     */
+    public List<String> garantirEsquemaLocal(String database, String esquema) {
+        if (database == null || esquema == null || esquema.isBlank()) {
+            throw new RuntimeException("Base e esquema são obrigatórios");
+        }
+
+        obterSchemaUnico(database, esquema, TipoConexao.CLOUD);
+
+        try (Connection conexao = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, "")) {
+            if (!schemaExiste(conexao, esquema)) {
+                String schemaQuery = gerarQueryCriacaoSchemas(conexao, esquema);
+                if (schemaQuery != null && !schemaQuery.isBlank()) {
+                    try (Statement stmt = conexao.createStatement()) {
+                        stmt.execute(schemaQuery);
+                    }
+                }
+            }
+
+            if (!schemaExiste(conexao, esquema)) {
+                throw new RuntimeException("Não foi possível criar o esquema local: " + esquema);
+            }
+
+            List<String> listar = new ArrayList<>();
+            listar.add(esquema);
+            return listar;
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
+
     public String criarSequenciaQuery(Connection conexaoCloud, Connection conexaoLocal, String esquema)
             throws SQLException {
         // SELECT last_value FROM pg_sequences WHERE schemaname = 'public' AND
