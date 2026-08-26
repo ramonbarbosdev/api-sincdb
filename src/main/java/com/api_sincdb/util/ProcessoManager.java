@@ -11,9 +11,8 @@ public class ProcessoManager {
     private volatile boolean executando = false;
 
     public synchronized void iniciarProcesso(Runnable tarefa) throws InterruptedException {
-        if (executando) {
-            System.out.println("Já existe um processo em execução.");
-            return;
+        while (executando) {
+            Thread.sleep(50);
         }
 
         executando = true;

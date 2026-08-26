@@ -44,6 +44,7 @@ import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.helper.EstruturaDadosUtils;
 import com.api_sincdb.helper.JwtHelper;
+import com.api_sincdb.util.SyncCacheKeys;
 import com.api_sincdb.util.ThreadUtils;
 import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
@@ -118,9 +119,12 @@ public class DadosService {
                     detalhes);
             ThreadUtils.verificarCancelamento();
 
+            String cacheKey = SyncCacheKeys.dados(database, esquema, tabela);
             if (querys != null) {
-                cacheService.salvarCache(database + "_dados:", querys);
+                cacheService.salvarCache(cacheKey, querys);
                 response.put("tabelas_afetadas", detalhes);
+            } else {
+                cacheService.salvarCache(cacheKey, new HashMap<String, List<String>>());
             }
 
             response.put("sucesso", true);
@@ -163,13 +167,26 @@ public class DadosService {
             desativarConstraints(conexaoLocal);
 
             @SuppressWarnings("unchecked")
-            HashMap<String, List<String>> querys = cacheService.buscarCache(database + "_dados:", HashMap.class);
+            HashMap<String, List<String>> querys = cacheService.buscarCache(
+                    SyncCacheKeys.dados(database, esquema, tabela), HashMap.class);
 
             if (querys == null) {
                 response.put("sucesso", false);
                 response.put("errors", "Nenhuma verificação foi feita previamente.");
                 logPublisher.enviarLog("Nenhuma verificação foi feita previamente.");
 
+                return response;
+            }
+
+            if (querys.isEmpty()) {
+                response.put("sucesso", true);
+                response.put("tabelas_afetadas", detalhes);
+                response.put("errors", Collections.emptyList());
+                ativarConstraints(conexaoLocal);
+                sincronizacaoSchemaService.finalizarSucesso(database,
+                        esquema, usuario,
+                        "Nada a sincronizar para este escopo.",
+                        TipoOperacao.DADOS);
                 return response;
             }
 

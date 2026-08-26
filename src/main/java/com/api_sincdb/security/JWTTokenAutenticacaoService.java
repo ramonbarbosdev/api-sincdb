@@ -132,9 +132,12 @@ public class JWTTokenAutenticacaoService {
 
     public String obterUsuarioLogado(String token) {
 
-        if (token.isEmpty()) {
+        if (token == null || token.isBlank()) {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            return (String) auth.getName();
+            if (auth == null) {
+                throw new IllegalStateException("Usuário não autenticado.");
+            }
+            return auth.getName();
 
         } else {
             SecretKeySpec secretKey = createSecretKey();

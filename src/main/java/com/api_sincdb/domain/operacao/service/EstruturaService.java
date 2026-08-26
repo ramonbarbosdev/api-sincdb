@@ -36,6 +36,7 @@ import com.api_sincdb.enums.TipoOperacao;
 import com.api_sincdb.helper.EstruturaDadosUtils;
 import com.api_sincdb.helper.JwtHelper;
 import com.api_sincdb.util.MontarEstruturaResponseUtils;
+import com.api_sincdb.util.SyncCacheKeys;
 import com.api_sincdb.util.ThreadUtils;
 import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
@@ -125,13 +126,15 @@ public class EstruturaService {
                     esquema,
                     nomeTabela);
 
+            String cacheKey = SyncCacheKeys.estrutura(database, esquema, nomeTabela);
             if (queries != null) {
-
-                cacheService.salvarCache(database + "_estrutura:", queries);
                 Map<String, List<EstruturaTabela>> categorias = MontarEstruturaResponseUtils
                         .montarDetalhesPorCategoria(queries);
 
                 response.putAll(categorias);
+                cacheService.salvarCache(cacheKey, queries);
+            } else {
+                cacheService.salvarCache(cacheKey, new HashMap<String, List<String>>());
             }
 
             response.put("sucesso", true);
@@ -166,7 +169,7 @@ public class EstruturaService {
         return response;
     }
 
-    public Map<String, Object> sincronizarEstrutura(String token, String database, String esquema) {
+    public Map<String, Object> sincronizarEstrutura(String token, String database, String esquema, String nomeTabela) {
 
         Map<String, Object> response = new LinkedHashMap<>();
         List<Map<String, String>> detalhes = new ArrayList<>();
@@ -178,7 +181,8 @@ public class EstruturaService {
             sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.ESTRUTURA);
 
             @SuppressWarnings("unchecked")
-            HashMap<String, List<String>> querys = cacheService.buscarCache(database + "_estrutura:", HashMap.class);
+            HashMap<String, List<String>> querys = cacheService.buscarCache(
+                    SyncCacheKeys.estrutura(database, esquema, nomeTabela), HashMap.class);
 
             if (querys == null) {
                 response.put("sucesso", false);
@@ -188,6 +192,17 @@ public class EstruturaService {
                 sincronizacaoSchemaService.finalizarErro(database,
                         esquema, usuario, "Sincronização abortada: scripts não encontrados.", TipoOperacao.ESTRUTURA);
 
+                return response;
+            }
+
+            if (querys.isEmpty()) {
+                response.put("sucesso", true);
+                response.put("tabelas_afetadas", detalhes);
+                response.put("errors", Collections.emptyList());
+                sincronizacaoSchemaService.finalizarSucesso(database,
+                        esquema, usuario,
+                        "Nada a sincronizar para este escopo.",
+                        TipoOperacao.ESTRUTURA);
                 return response;
             }
 

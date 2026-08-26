@@ -92,11 +92,15 @@ public class DatabaseService {
     }
 
     public List<String> obterSchemaUnico(String database, String esquema, TipoConexao tipo) {
+        return obterSchemaUnico(database, esquema, tipo, "");
+    }
+
+    public List<String> obterSchemaUnico(String database, String esquema, TipoConexao tipo, String token) {
         List<String> listar = new ArrayList<>();
         if (database == null)
             return null;
 
-        try (Connection conexao = conexaoBanco.abrirConexao(database, tipo, "");) {
+        try (Connection conexao = conexaoBanco.abrirConexao(database, tipo, token);) {
             StringBuilder query = new StringBuilder(
                     "SELECT nspname  FROM pg_namespace WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')");
 
@@ -210,13 +214,17 @@ public class DatabaseService {
      * Valida que o schema também existe no cloud antes de criar localmente.
      */
     public List<String> garantirEsquemaLocal(String database, String esquema) {
+        return garantirEsquemaLocal(database, esquema, "");
+    }
+
+  public List<String> garantirEsquemaLocal(String database, String esquema, String token) {
         if (database == null || esquema == null || esquema.isBlank()) {
             throw new RuntimeException("Base e esquema são obrigatórios");
         }
 
-        obterSchemaUnico(database, esquema, TipoConexao.CLOUD);
+        obterSchemaUnico(database, esquema, TipoConexao.CLOUD, token);
 
-        try (Connection conexao = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, "")) {
+        try (Connection conexao = conexaoBanco.abrirConexao(database, TipoConexao.LOCAL, token)) {
             if (!schemaExiste(conexao, esquema)) {
                 String schemaQuery = gerarQueryCriacaoSchemas(conexao, esquema);
                 if (schemaQuery != null && !schemaQuery.isBlank()) {

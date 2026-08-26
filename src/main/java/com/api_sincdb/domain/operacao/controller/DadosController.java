@@ -155,10 +155,27 @@ public class DadosController {
 	public ResponseEntity<?> sincronizacao(@PathVariable(value = "base") String base,
 			@PathVariable(value = "esquema") String esquema, HttpServletRequest request) {
 
-		// String token = request.getHeader("Authorization");
 		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
 
 		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, esquema, null, false);
+
+		if ((Boolean) resultado.get("sucesso")) {
+			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
+
+		} else {
+			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.NOT_FOUND);
+		}
+	}
+
+	@GetMapping(value = "/{base}/{esquema}/{tabela}", produces = "application/json")
+	public ResponseEntity<?> sincronizacaoTabela(@PathVariable(value = "base") String base,
+			@PathVariable(value = "esquema") String esquema,
+			@PathVariable(value = "tabela") String tabela,
+			HttpServletRequest request) {
+
+		String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
+
+		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, esquema, tabela, false);
 
 		if ((Boolean) resultado.get("sucesso")) {
 			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
