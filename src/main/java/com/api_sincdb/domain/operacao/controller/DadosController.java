@@ -159,15 +159,15 @@ public class DadosController {
 
 		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, esquema, null, false);
 
-		if ((Boolean) resultado.get("sucesso")) {
-			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
+        if ((Boolean) resultado.get("sucesso")) {
+            return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
 
-		} else {
-			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.NOT_FOUND);
-		}
-	}
+        } else {
+            return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 
-	@GetMapping(value = "/{base}/{esquema}/{tabela}", produces = "application/json")
+    @GetMapping(value = "/{base}/{esquema}/{tabela}", produces = "application/json")
 	public ResponseEntity<?> sincronizacaoTabela(@PathVariable(value = "base") String base,
 			@PathVariable(value = "esquema") String esquema,
 			@PathVariable(value = "tabela") String tabela,
@@ -177,12 +177,12 @@ public class DadosController {
 
 		Map<String, Object> resultado = dadosService.sincronizarDados(token, base, esquema, tabela, false);
 
-		if ((Boolean) resultado.get("sucesso")) {
-			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
+        if ((Boolean) resultado.get("sucesso")) {
+            return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.OK);
 
-		} else {
-			return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.NOT_FOUND);
-		}
-	}
+        } else {
+            return new ResponseEntity<Map<String, Object>>(resultado, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 
 }

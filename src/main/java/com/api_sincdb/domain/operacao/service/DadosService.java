@@ -197,19 +197,30 @@ public class DadosService {
 
             List<String> listaErro = new ArrayList<>();
             for (Map<String, String> erro : detalhes) {
-                listaErro.add(erro.get("errors"));
+                String mensagem = erro.get("erro");
+                if (mensagem != null && !mensagem.isBlank()) {
+                    listaErro.add(mensagem);
+                }
             }
 
-            response.put("sucesso", true);
+            boolean possuiErros = !listaErro.isEmpty();
+            response.put("sucesso", !possuiErros);
             response.put("tabelas_afetadas", detalhes);
             response.put("errors", listaErro);
 
             ativarConstraints(conexaoLocal);
 
-            sincronizacaoSchemaService.finalizarSucesso(database,
-                    esquema, usuario,
-                    "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
-                    TipoOperacao.DADOS);
+            if (possuiErros) {
+                sincronizacaoSchemaService.finalizarErro(database,
+                        esquema,
+                        usuario,
+                        "Sincronização com erros: " + listaErro.get(0), TipoOperacao.DADOS);
+            } else {
+                sincronizacaoSchemaService.finalizarSucesso(database,
+                        esquema, usuario,
+                        "Sincronização concluída. Total de tabelas processadas: " + detalhes.size(),
+                        TipoOperacao.DADOS);
+            }
 
         } catch (Exception e) {
 

@@ -64,7 +64,7 @@ public class OperacaoBancoService {
             Connection conexaoLocal,
             Connection conexaoCloud,
             HashMap<String, List<String>> queries,
-            List<Map<String, String>> detalhes) throws IOException {
+            List<Map<String, String>> detalhes) throws IOException, SQLException {
 
         try {
             logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
@@ -115,13 +115,7 @@ public class OperacaoBancoService {
             processoService.enviarProgresso("Concluido", 100, "Sincronização concluída com sucesso", null);
 
         } catch (SQLException e) {
-            logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
-
-            try {
-                conexaoLocal.rollback();
-            } catch (SQLException ex) {
-                logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
-            }
+            handleTransactionFailure(conexaoLocal, e);
         } finally {
             try {
                 conexaoLocal.setAutoCommit(true);
@@ -132,7 +126,7 @@ public class OperacaoBancoService {
     }
 
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
-            List<Map<String, String>> detalhes) throws IOException {
+            List<Map<String, String>> detalhes) throws IOException, SQLException {
         try {
 
             logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
@@ -172,14 +166,7 @@ public class OperacaoBancoService {
             processoService.enviarProgresso("Concluido", 100, "Sincronização concluída com sucesso", null);
 
         } catch (SQLException e) {
-            logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
-
-            try {
-                conexao.rollback();
-            } catch (SQLException ex) {
-                logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
-
-            }
+            handleTransactionFailure(conexao, e);
         } finally {
             try {
                 conexao.setAutoCommit(true);
@@ -390,6 +377,19 @@ public class OperacaoBancoService {
         }
 
         return "desconhecida";
+    }
+
+    private void handleTransactionFailure(Connection conexao, SQLException e) throws SQLException {
+        logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
+
+        try {
+            conexao.rollback();
+        } catch (SQLException ex) {
+            logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
+        }
+
+        processoService.enviarProgresso("Erro", 0, "Falha na sincronização: " + e.getMessage(), null);
+        throw e;
     }
 
 }
