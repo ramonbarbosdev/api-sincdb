@@ -18,6 +18,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.config.SshTunnelService;
 import com.api_sincdb.context.TenantRuntimeContext;
 import com.api_sincdb.domain.conexao.model.Conexao;
 import com.api_sincdb.domain.conexao.repository.ConexaoRepository;
@@ -26,6 +28,7 @@ import com.api_sincdb.domain.sql.dto.SqlColumnDTO;
 import com.api_sincdb.domain.sql.dto.SqlExecutionRequest;
 import com.api_sincdb.domain.sql.dto.SqlExecutionResponse;
 import com.api_sincdb.domain.sql.dto.SqlRiskResult;
+import com.api_sincdb.enums.TipoConexao;
 
 @Service
 public class SqlEditorService {
@@ -44,15 +47,18 @@ public class SqlEditorService {
     private final SqlHistoryService sqlHistoryService;
     private final ConexaoRepository conexaoRepository;
     private final ParametroMasterService parametroMasterService;
+    private final ConexaoBanco conexaoBanco;
 
     public SqlEditorService(SqlRiskAnalyzer sqlRiskAnalyzer,
             SqlHistoryService sqlHistoryService,
             ConexaoRepository conexaoRepository,
-            ParametroMasterService parametroMasterService) {
+            ParametroMasterService parametroMasterService,
+            ConexaoBanco conexaoBanco) {
         this.sqlRiskAnalyzer = sqlRiskAnalyzer;
         this.sqlHistoryService = sqlHistoryService;
         this.conexaoRepository = conexaoRepository;
         this.parametroMasterService = parametroMasterService;
+        this.conexaoBanco = conexaoBanco;
     }
 
     public SqlExecutionResponse executar(SqlExecutionRequest request) {
@@ -80,11 +86,13 @@ public class SqlEditorService {
 
             Conexao conexao = buscarConexao(request.getConexaoId(), idEmpresa, idTenant);
             Credenciais credenciais = resolverCredenciais(conexao, request.getAmbiente());
+            TipoConexao tipoConexao = resolverTipoConexao(request.getAmbiente());
+            SshTunnelService.ResolvedJdbcEndpoint endpoint = conexaoBanco.resolverJdbcParaConexao(conexao, tipoConexao);
             int maxRows = normalizarMaxRows(request.getMaxRows());
             int timeoutSeconds = normalizarTimeoutSeconds(request.getTimeoutSeconds());
 
             try (Connection connection = DriverManager.getConnection(
-                    jdbcUrl(credenciais.host(), credenciais.port(), request.getBase().trim()),
+                    jdbcUrl(endpoint.host(), endpoint.port(), request.getBase().trim()),
                     credenciais.user(),
                     credenciais.password());
                     PreparedStatement statement = prepararStatement(connection, sqlValidado, request.getParametros())) {
@@ -416,6 +424,16 @@ public class SqlEditorService {
         }
 
         return conexao;
+    }
+
+    private TipoConexao resolverTipoConexao(String ambiente) {
+        if ("cloud".equalsIgnoreCase(ambiente)) {
+            return TipoConexao.CLOUD;
+        }
+        if ("local".equalsIgnoreCase(ambiente)) {
+            return TipoConexao.LOCAL;
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ambiente deve ser cloud ou local.");
     }
 
     private Credenciais resolverCredenciais(Conexao conexao, String ambiente) {

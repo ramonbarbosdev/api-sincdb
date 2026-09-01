@@ -72,6 +72,11 @@ public class ConexaoController {
         return ResponseEntity.ok(Map.of("message", "Conexao removida com sucesso."));
     }
 
+    @PostMapping(value = "/testar", produces = "application/json")
+    public ResponseEntity<?> testar(@RequestBody ConexaoDTO dto) {
+        return ResponseEntity.ok(conexaoService.testarConexao(dto));
+    }
+
     @PostMapping("/certificado/upload")
     public ResponseEntity<?> uploadCertificado(@RequestParam("arquivo") MultipartFile arquivo) {
         return ResponseEntity.ok(conexaoService.uploadCertificado(arquivo));

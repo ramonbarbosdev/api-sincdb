@@ -43,9 +43,11 @@ public class ConexaoBanco {
     private static final Dotenv dotenv;
 
     private final ConexaoRepository conexaoRepository;
+    private final SshTunnelService sshTunnelService;
 
-    public ConexaoBanco(ConexaoRepository conexaoRepository) {
+    public ConexaoBanco(ConexaoRepository conexaoRepository, SshTunnelService sshTunnelService) {
         this.conexaoRepository = conexaoRepository;
+        this.sshTunnelService = sshTunnelService;
     }
 
     @Autowired
@@ -67,17 +69,28 @@ public class ConexaoBanco {
 
     private static final Map<String, HikariDataSource> dataSourceMap = new ConcurrentHashMap<>();
 
-    private static HikariDataSource criarDataSource(String host, String port, String database, String user,
-            String password) throws Exception {
+    private static HikariDataSource criarDataSource(
+            String host,
+            String port,
+            String database,
+            String user,
+            String password,
+            Map<String, String> sshDados,
+            String tunnelKey,
+            SshTunnelService sshTunnelService) throws Exception {
+
+        SshTunnelService.ResolvedJdbcEndpoint endpoint = resolverEndpointJdbc(
+                host, port, sshDados, tunnelKey, sshTunnelService);
 
         String dbToUse = database;
 
         if (dbToUse == null || dbToUse.isBlank() || dbToUse.contains("mudar")) {
-            dbToUse = detectarBancoDefault(host, port, user, password);
+            dbToUse = detectarBancoDefault(
+                    host, port, user, password, sshDados, tunnelKey, sshTunnelService);
         }
 
         HikariConfig config = new HikariConfig();
-        config.setJdbcUrl("jdbc:postgresql://" + host + ":" + port + "/" + dbToUse);
+        config.setJdbcUrl("jdbc:postgresql://" + endpoint.host() + ":" + endpoint.port() + "/" + dbToUse);
         config.setUsername(user);
         config.setPassword(password);
         config.setMaximumPoolSize(10);
@@ -88,12 +101,18 @@ public class ConexaoBanco {
         return new HikariDataSource(config);
     }
 
-    private static String detectarBancoDefault(String host, String port, String user, String password)
-            throws Exception {
+    private static String detectarBancoDefault(
+            String host,
+            String port,
+            String user,
+            String password,
+            Map<String, String> sshDados,
+            String tunnelKey,
+            SshTunnelService sshTunnelService) throws Exception {
         String[] candidatos = { "postgres", "defaultdb", user, "template1" };
 
         for (String candidato : candidatos) {
-            if (existeDatabase(host, port, user, password, candidato)) {
+            if (existeDatabase(host, port, user, password, candidato, sshTunnelService, sshDados, tunnelKey)) {
                 return candidato;
             }
         }
@@ -104,15 +123,64 @@ public class ConexaoBanco {
                         + user + " ou template1.");
     }
 
-    private static boolean existeDatabase(String host, String port, String user, String password, String db) {
-        try (Connection conn = DriverManager.getConnection(
-                "jdbc:postgresql://" + host + ":" + port + "/" + db, user, password);
-                Statement st = conn.createStatement();
-                ResultSet rs = st.executeQuery("SELECT 1")) {
-            return rs.next();
+    private static boolean existeDatabase(
+            String host,
+            String port,
+            String user,
+            String password,
+            String db,
+            SshTunnelService sshTunnelService,
+            Map<String, String> sshDados,
+            String tunnelKey) {
+        try {
+            SshTunnelService.ResolvedJdbcEndpoint endpoint = resolverEndpointJdbc(
+                    host,
+                    port,
+                    sshDados,
+                    tunnelKey + "_probe_" + db,
+                    sshTunnelService);
+            try (Connection conn = DriverManager.getConnection(
+                    "jdbc:postgresql://" + endpoint.host() + ":" + endpoint.port() + "/" + db,
+                    user,
+                    password);
+                    Statement st = conn.createStatement();
+                    ResultSet rs = st.executeQuery("SELECT 1")) {
+                return rs.next();
+            }
         } catch (Exception e) {
-            return false; // não existe ou não acessível
+            return false;
         }
+    }
+
+    private static SshTunnelService.ResolvedJdbcEndpoint resolverEndpointJdbc(
+            String host,
+            String port,
+            Map<String, String> sshDados,
+            String tunnelKey,
+            SshTunnelService sshTunnelService) throws java.io.IOException {
+
+        boolean sshEnabled = sshDados != null && "true".equalsIgnoreCase(sshDados.get("ssh_enabled"));
+        if (!sshEnabled) {
+            return new SshTunnelService.ResolvedJdbcEndpoint(host, port, null);
+        }
+
+        return sshTunnelService.resolve(
+                tunnelKey,
+                true,
+                sshDados.get("ssh_host"),
+                sshDados.get("ssh_port"),
+                sshDados.get("ssh_user"),
+                sshDados.get("ssh_password"),
+                host,
+                port);
+    }
+
+    private static String buildTunnelKey(String idEmpresa, String idConexao, TipoConexao tipo) {
+        return String.join("_",
+                idEmpresa == null || idEmpresa.isBlank() ? "sem_empresa" : idEmpresa,
+                idConexao == null || idConexao.isBlank() ? "sem_conexao" : idConexao,
+                tipo.name(),
+                "ssh");
     }
 
     public Connection abrirConexao(String database, TipoConexao tipo, String token) throws Exception {
@@ -123,20 +191,24 @@ public class ConexaoBanco {
     public Connection abrirConexao(String database, TipoConexao tipo, String token, String idConexaoSelecionada)
             throws Exception {
 
-        Map<String, String> response = gerenciarConexao(database, tipo, false, token, idConexaoSelecionada);
+        Map<String, String> dados = buscarDadosConexao(tipo, token, idConexaoSelecionada);
 
-        String host = response.get("host");
-        String port = response.get("port");
-        String user = response.get("user");
-        String password = response.get("password");
-        String idEmpresa = response.get("id_empresa");
-        String idConexao = response.get("id_conexao");
+        String host = dados.get("host");
+        String port = dados.get("port");
+        String user = dados.get("user");
+        String password = dados.get("password");
+        String idEmpresa = dados.get("id_empresa");
+        String idConexao = dados.get("id_conexao");
+
+        validacaoConecao(database, tipo, dados);
 
         String chave = String.join("_",
                 idEmpresa == null || idEmpresa.isBlank() ? "sem_empresa" : idEmpresa,
                 idConexao == null || idConexao.isBlank() ? "sem_conexao" : idConexao,
                 database,
                 tipo.name());
+
+        String tunnelKey = buildTunnelKey(idEmpresa, idConexao, tipo);
 
         HikariDataSource dataSource = dataSourceMap.get(chave);
 
@@ -148,7 +220,15 @@ public class ConexaoBanco {
             synchronized (ConexaoBanco.class) {
                 dataSource = dataSourceMap.get(chave);
                 if (dataSource == null) {
-                    dataSource = criarDataSource(host, port, database, user, password);
+                    dataSource = criarDataSource(
+                            host,
+                            port,
+                            database,
+                            user,
+                            password,
+                            dados,
+                            tunnelKey,
+                            sshTunnelService);
                     dataSourceMap.put(chave, dataSource);
                 }
             }
@@ -268,7 +348,7 @@ public class ConexaoBanco {
         }
     }
 
-    public static void fecharTodos() {
+    public void fecharTodos() {
         for (Map.Entry<String, HikariDataSource> entry : dataSourceMap.entrySet()) {
             String chave = entry.getKey();
             HikariDataSource dataSource = entry.getValue();
@@ -278,6 +358,7 @@ public class ConexaoBanco {
             }
         }
         dataSourceMap.clear();
+        sshTunnelService.closeAll();
     }
 
     public Map<String, String> buscarDadosConexao(TipoConexao tipo, String token) {
@@ -336,11 +417,29 @@ public class ConexaoBanco {
                 adicionarValido(dados, "port", conexao.getDb_cloud_port());
                 adicionarValido(dados, "user", conexao.getDb_cloud_user());
                 adicionarValido(dados, "password", conexao.getDb_cloud_password());
+                if (Boolean.TRUE.equals(conexao.getDb_cloud_ssh_enabled())) {
+                    dados.put("ssh_enabled", "true");
+                    adicionarValido(dados, "ssh_host", conexao.getDb_cloud_ssh_host());
+                    adicionarValido(dados, "ssh_port", conexao.getDb_cloud_ssh_port());
+                    adicionarValido(dados, "ssh_user", conexao.getDb_cloud_ssh_user());
+                    adicionarValido(dados, "ssh_password", conexao.getDb_cloud_ssh_password());
+                } else {
+                    dados.put("ssh_enabled", "false");
+                }
             } else if (tipo == TipoConexao.LOCAL) {
                 adicionarValido(dados, "host", conexao.getDb_local_host());
                 adicionarValido(dados, "port", conexao.getDb_local_port());
                 adicionarValido(dados, "user", conexao.getDb_local_user());
                 adicionarValido(dados, "password", conexao.getDb_local_password());
+                if (Boolean.TRUE.equals(conexao.getDb_local_ssh_enabled())) {
+                    dados.put("ssh_enabled", "true");
+                    adicionarValido(dados, "ssh_host", conexao.getDb_local_ssh_host());
+                    adicionarValido(dados, "ssh_port", conexao.getDb_local_ssh_port());
+                    adicionarValido(dados, "ssh_user", conexao.getDb_local_ssh_user());
+                    adicionarValido(dados, "ssh_password", conexao.getDb_local_ssh_password());
+                } else {
+                    dados.put("ssh_enabled", "false");
+                }
             }
 
             return dados;
@@ -354,6 +453,209 @@ public class ConexaoBanco {
         if (valor != null && !valor.trim().isEmpty()) {
             mapa.put(chave, valor);
         }
+    }
+
+    public SshTunnelService.ResolvedJdbcEndpoint resolverJdbcParaConexao(Conexao conexao, TipoConexao tipo)
+            throws java.io.IOException {
+        String host;
+        String port;
+        Map<String, String> sshDados = new HashMap<>();
+
+        if (tipo == TipoConexao.CLOUD) {
+            host = conexao.getDb_cloud_host();
+            port = conexao.getDb_cloud_port();
+            if (Boolean.TRUE.equals(conexao.getDb_cloud_ssh_enabled())) {
+                sshDados.put("ssh_enabled", "true");
+                sshDados.put("ssh_host", conexao.getDb_cloud_ssh_host());
+                sshDados.put("ssh_port", conexao.getDb_cloud_ssh_port());
+                sshDados.put("ssh_user", conexao.getDb_cloud_ssh_user());
+                sshDados.put("ssh_password", conexao.getDb_cloud_ssh_password());
+            } else {
+                sshDados.put("ssh_enabled", "false");
+            }
+        } else {
+            host = conexao.getDb_local_host();
+            port = conexao.getDb_local_port();
+            if (Boolean.TRUE.equals(conexao.getDb_local_ssh_enabled())) {
+                sshDados.put("ssh_enabled", "true");
+                sshDados.put("ssh_host", conexao.getDb_local_ssh_host());
+                sshDados.put("ssh_port", conexao.getDb_local_ssh_port());
+                sshDados.put("ssh_user", conexao.getDb_local_ssh_user());
+                sshDados.put("ssh_password", conexao.getDb_local_ssh_password());
+            } else {
+                sshDados.put("ssh_enabled", "false");
+            }
+        }
+
+        String tunnelKey = buildTunnelKey(conexao.getId_empresa(), conexao.getId(), tipo);
+        return resolverEndpointJdbc(host, port, sshDados, tunnelKey, sshTunnelService);
+    }
+
+    private static final int TESTE_JDBC_CONNECT_TIMEOUT_MS = 5000;
+    private static final int TESTE_JDBC_SOCKET_TIMEOUT_MS = 10000;
+    private static final int TESTE_SSH_CONNECT_TIMEOUT_MS = 10000;
+
+    public Map<String, Object> testarConexaoJdbc(Conexao conexao, TipoConexao tipo) {
+        String label = tipo == TipoConexao.CLOUD ? "Cloud" : "Local";
+        boolean viaSsh = false;
+        String tunnelKey = "test_" + tipo.name() + "_" + System.nanoTime();
+
+        try {
+            String host;
+            String port;
+            String user;
+            String password;
+            Map<String, String> sshDados = new HashMap<>();
+
+            if (tipo == TipoConexao.CLOUD) {
+                host = conexao.getDb_cloud_host();
+                port = conexao.getDb_cloud_port();
+                user = conexao.getDb_cloud_user();
+                password = conexao.getDb_cloud_password();
+                viaSsh = Boolean.TRUE.equals(conexao.getDb_cloud_ssh_enabled());
+                if (viaSsh) {
+                    sshDados.put("ssh_enabled", "true");
+                    sshDados.put("ssh_host", conexao.getDb_cloud_ssh_host());
+                    sshDados.put("ssh_port", conexao.getDb_cloud_ssh_port());
+                    sshDados.put("ssh_user", conexao.getDb_cloud_ssh_user());
+                    sshDados.put("ssh_password", conexao.getDb_cloud_ssh_password());
+                } else {
+                    sshDados.put("ssh_enabled", "false");
+                }
+            } else {
+                host = conexao.getDb_local_host();
+                port = conexao.getDb_local_port();
+                user = conexao.getDb_local_user();
+                password = conexao.getDb_local_password();
+                viaSsh = Boolean.TRUE.equals(conexao.getDb_local_ssh_enabled());
+                if (viaSsh) {
+                    sshDados.put("ssh_enabled", "true");
+                    sshDados.put("ssh_host", conexao.getDb_local_ssh_host());
+                    sshDados.put("ssh_port", conexao.getDb_local_ssh_port());
+                    sshDados.put("ssh_user", conexao.getDb_local_ssh_user());
+                    sshDados.put("ssh_password", conexao.getDb_local_ssh_password());
+                } else {
+                    sshDados.put("ssh_enabled", "false");
+                }
+            }
+
+            validarCamposConexaoTeste(host, port, user, password, label);
+            if (viaSsh) {
+                validarCamposSshTeste(sshDados, label);
+            }
+
+            SshTunnelService.ResolvedJdbcEndpoint endpoint = resolverEndpointJdbc(
+                    host, port, sshDados, tunnelKey, sshTunnelService);
+
+            String[] candidatos = { "postgres", user, "template1" };
+            Exception falha = null;
+            String databaseUsado = null;
+
+            for (String database : candidatos) {
+                if (database == null || database.isBlank()) {
+                    continue;
+                }
+
+                try {
+                    validarConsultaTeste(endpoint, database, user, password);
+                    databaseUsado = database;
+                    falha = null;
+                    break;
+                } catch (Exception e) {
+                    falha = e;
+                }
+            }
+
+            if (falha != null) {
+                throw falha;
+            }
+
+            Map<String, Object> resultado = new HashMap<>();
+            resultado.put("ok", true);
+            resultado.put("ambiente", label);
+            resultado.put("message", "Conexao " + label + " estabelecida com sucesso.");
+            resultado.put("viaSsh", viaSsh);
+            resultado.put("database", databaseUsado != null ? databaseUsado : "postgres");
+            return resultado;
+        } catch (Exception e) {
+            Map<String, Object> resultado = new HashMap<>();
+            resultado.put("ok", false);
+            resultado.put("ambiente", label);
+            resultado.put("message", extrairMensagemTeste(e));
+            resultado.put("viaSsh", viaSsh);
+            return resultado;
+        } finally {
+            sshTunnelService.closeTunnel(tunnelKey);
+        }
+    }
+
+    private void validarConsultaTeste(
+            SshTunnelService.ResolvedJdbcEndpoint endpoint,
+            String database,
+            String user,
+            String password) throws SQLException {
+        String jdbcUrl = "jdbc:postgresql://" + endpoint.host() + ":" + endpoint.port() + "/" + database
+                + "?connectTimeout=" + TESTE_JDBC_CONNECT_TIMEOUT_MS
+                + "&socketTimeout=" + TESTE_JDBC_SOCKET_TIMEOUT_MS;
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password);
+                Statement st = conn.createStatement();
+                ResultSet rs = st.executeQuery("SELECT 1")) {
+            if (!rs.next()) {
+                throw new SQLException("Banco respondeu sem resultado na validacao.");
+            }
+        }
+    }
+
+    private void validarCamposConexaoTeste(
+            String host,
+            String port,
+            String user,
+            String password,
+            String label) {
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("Host " + label + " nao informado.");
+        }
+        if (port == null || port.isBlank()) {
+            throw new IllegalArgumentException("Porta " + label + " nao informada.");
+        }
+        if (user == null || user.isBlank()) {
+            throw new IllegalArgumentException("Usuario " + label + " nao informado.");
+        }
+        if (password == null || password.isBlank()) {
+            throw new IllegalArgumentException("Senha " + label + " nao informada.");
+        }
+    }
+
+    private void validarCamposSshTeste(Map<String, String> sshDados, String label) {
+        if (sshDados.get("ssh_host") == null || sshDados.get("ssh_host").isBlank()) {
+            throw new IllegalArgumentException("Host SSH do ambiente " + label + " nao informado.");
+        }
+        if (sshDados.get("ssh_port") == null || sshDados.get("ssh_port").isBlank()) {
+            throw new IllegalArgumentException("Porta SSH do ambiente " + label + " nao informada.");
+        }
+        if (sshDados.get("ssh_user") == null || sshDados.get("ssh_user").isBlank()) {
+            throw new IllegalArgumentException("Usuario SSH do ambiente " + label + " nao informado.");
+        }
+        if (sshDados.get("ssh_password") == null || sshDados.get("ssh_password").isBlank()) {
+            throw new IllegalArgumentException("Senha SSH do ambiente " + label + " nao informada.");
+        }
+    }
+
+    private String extrairMensagemTeste(Exception e) {
+        if (e instanceof IllegalStateException && e.getCause() != null) {
+            return e.getCause().getMessage();
+        }
+
+        if (e.getMessage() != null && !e.getMessage().isBlank()) {
+            return e.getMessage();
+        }
+
+        if (e.getCause() != null && e.getCause().getMessage() != null) {
+            return e.getCause().getMessage();
+        }
+
+        return "Falha ao testar a conexao.";
     }
 
     private String resolverIdEmpresaAtiva(String token) {

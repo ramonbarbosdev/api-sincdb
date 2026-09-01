@@ -15,6 +15,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.api_sincdb.config.ConexaoBanco;
+import com.api_sincdb.config.SshTunnelService;
 import com.api_sincdb.context.TenantRuntimeContext;
 import com.api_sincdb.domain.conexao.model.Conexao;
 import com.api_sincdb.domain.conexao.repository.ConexaoRepository;
@@ -23,6 +25,7 @@ import com.api_sincdb.domain.sql.dto.SqlCatalogoColumnDTO;
 import com.api_sincdb.domain.sql.dto.SqlCatalogoDTO;
 import com.api_sincdb.domain.sql.dto.SqlCatalogoSchemaDTO;
 import com.api_sincdb.domain.sql.dto.SqlCatalogoTableDTO;
+import com.api_sincdb.enums.TipoConexao;
 
 @Service
 public class SqlCatalogoService {
@@ -52,14 +55,17 @@ public class SqlCatalogoService {
     private final ConexaoRepository conexaoRepository;
     private final ParametroMasterService parametroMasterService;
     private final SqlCatalogoCacheService cacheService;
+    private final ConexaoBanco conexaoBanco;
 
     public SqlCatalogoService(
             ConexaoRepository conexaoRepository,
             ParametroMasterService parametroMasterService,
-            SqlCatalogoCacheService cacheService) {
+            SqlCatalogoCacheService cacheService,
+            ConexaoBanco conexaoBanco) {
         this.conexaoRepository = conexaoRepository;
         this.parametroMasterService = parametroMasterService;
         this.cacheService = cacheService;
+        this.conexaoBanco = conexaoBanco;
     }
 
     public SqlCatalogoDTO buscarCatalogo(String ambiente, String idConexao, String base) {
@@ -88,15 +94,28 @@ public class SqlCatalogoService {
     private SqlCatalogoDTO carregarECacher(String cacheKey, String idEmpresa, String idTenant,
             String idConexao, String ambiente, String base) {
         Conexao conexao = buscarConexao(idConexao, idEmpresa, idTenant);
-        Credenciais credenciais = resolverCredenciais(conexao, ambiente);
-        SqlCatalogoDTO catalogo = carregarCatalogo(credenciais, base);
+        SqlCatalogoDTO catalogo = carregarCatalogo(conexao, ambiente, base);
         cacheService.put(cacheKey, catalogo);
         return catalogo;
     }
 
-    private SqlCatalogoDTO carregarCatalogo(Credenciais credenciais, String base) {
+    private SqlCatalogoDTO carregarCatalogo(Conexao conexao, String ambiente, String base) {
+        Credenciais credenciais = resolverCredenciais(conexao, ambiente);
+        TipoConexao tipoConexao = resolverTipoConexao(ambiente);
+        try {
+            SshTunnelService.ResolvedJdbcEndpoint endpoint = conexaoBanco.resolverJdbcParaConexao(conexao, tipoConexao);
+            return carregarCatalogo(credenciais, endpoint, base);
+        } catch (java.io.IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CATALOGO_ERROR_MESSAGE);
+        }
+    }
+
+    private SqlCatalogoDTO carregarCatalogo(
+            Credenciais credenciais,
+            SshTunnelService.ResolvedJdbcEndpoint endpoint,
+            String base) {
         try (Connection connection = DriverManager.getConnection(
-                jdbcUrl(credenciais.host(), credenciais.port(), base),
+                jdbcUrl(endpoint.host(), endpoint.port(), base),
                 credenciais.user(),
                 credenciais.password());
                 PreparedStatement statement = connection.prepareStatement(SQL_CATALOGO)) {
@@ -185,6 +204,13 @@ public class SqlCatalogoService {
         }
 
         return conexao;
+    }
+
+    private TipoConexao resolverTipoConexao(String ambiente) {
+        if ("cloud".equalsIgnoreCase(ambiente)) {
+            return TipoConexao.CLOUD;
+        }
+        return TipoConexao.LOCAL;
     }
 
     private Credenciais resolverCredenciais(Conexao conexao, String ambiente) {

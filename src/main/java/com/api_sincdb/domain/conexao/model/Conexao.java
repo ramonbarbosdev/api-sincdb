@@ -15,10 +15,22 @@ public class Conexao {
     private String db_cloud_user;
     private String db_cloud_password;
 
+    private Boolean db_cloud_ssh_enabled = false;
+    private String db_cloud_ssh_host;
+    private String db_cloud_ssh_port;
+    private String db_cloud_ssh_user;
+    private String db_cloud_ssh_password;
+
     private String db_local_host;
     private String db_local_port;
     private String db_local_user;
     private String db_local_password;
+
+    private Boolean db_local_ssh_enabled = false;
+    private String db_local_ssh_host;
+    private String db_local_ssh_port;
+    private String db_local_ssh_user;
+    private String db_local_ssh_password;
 
     private Boolean fl_admin;
 
@@ -66,6 +78,46 @@ public class Conexao {
         this.db_cloud_password = db_cloud_password;
     }
 
+    public Boolean getDb_cloud_ssh_enabled() {
+        return db_cloud_ssh_enabled;
+    }
+
+    public void setDb_cloud_ssh_enabled(Boolean db_cloud_ssh_enabled) {
+        this.db_cloud_ssh_enabled = db_cloud_ssh_enabled;
+    }
+
+    public String getDb_cloud_ssh_host() {
+        return db_cloud_ssh_host;
+    }
+
+    public void setDb_cloud_ssh_host(String db_cloud_ssh_host) {
+        this.db_cloud_ssh_host = db_cloud_ssh_host;
+    }
+
+    public String getDb_cloud_ssh_port() {
+        return db_cloud_ssh_port;
+    }
+
+    public void setDb_cloud_ssh_port(String db_cloud_ssh_port) {
+        this.db_cloud_ssh_port = db_cloud_ssh_port;
+    }
+
+    public String getDb_cloud_ssh_user() {
+        return db_cloud_ssh_user;
+    }
+
+    public void setDb_cloud_ssh_user(String db_cloud_ssh_user) {
+        this.db_cloud_ssh_user = db_cloud_ssh_user;
+    }
+
+    public String getDb_cloud_ssh_password() {
+        return db_cloud_ssh_password;
+    }
+
+    public void setDb_cloud_ssh_password(String db_cloud_ssh_password) {
+        this.db_cloud_ssh_password = db_cloud_ssh_password;
+    }
+
     public String getDb_local_host() {
         return db_local_host;
     }
@@ -92,6 +144,46 @@ public class Conexao {
     }
     public void setDb_local_password(String db_local_password) {
         this.db_local_password = db_local_password;
+    }
+
+    public Boolean getDb_local_ssh_enabled() {
+        return db_local_ssh_enabled;
+    }
+
+    public void setDb_local_ssh_enabled(Boolean db_local_ssh_enabled) {
+        this.db_local_ssh_enabled = db_local_ssh_enabled;
+    }
+
+    public String getDb_local_ssh_host() {
+        return db_local_ssh_host;
+    }
+
+    public void setDb_local_ssh_host(String db_local_ssh_host) {
+        this.db_local_ssh_host = db_local_ssh_host;
+    }
+
+    public String getDb_local_ssh_port() {
+        return db_local_ssh_port;
+    }
+
+    public void setDb_local_ssh_port(String db_local_ssh_port) {
+        this.db_local_ssh_port = db_local_ssh_port;
+    }
+
+    public String getDb_local_ssh_user() {
+        return db_local_ssh_user;
+    }
+
+    public void setDb_local_ssh_user(String db_local_ssh_user) {
+        this.db_local_ssh_user = db_local_ssh_user;
+    }
+
+    public String getDb_local_ssh_password() {
+        return db_local_ssh_password;
+    }
+
+    public void setDb_local_ssh_password(String db_local_ssh_password) {
+        this.db_local_ssh_password = db_local_ssh_password;
     }
 
     public Boolean getFl_admin() {

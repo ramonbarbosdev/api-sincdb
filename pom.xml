@@ -186,12 +186,16 @@
 		<!-- MONGODB  -->
 
 		<dependency>
+			<groupId>com.hierynomus</groupId>
+			<artifactId>sshj</artifactId>
+			<version>0.39.0</version>
+		</dependency>
+
+		<dependency>
 			<groupId>io.projectreactor</groupId>
 			<artifactId>reactor-core</artifactId>
 		</dependency>
 
-	
-	
 	</dependencies>
 
 	<build>

@@ -1,9 +1,11 @@
 package com.api_sincdb.controller.conexao;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.json.JSONObject;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,7 @@ import com.api_sincdb.domain.conexao.model.Conexao;
 import com.api_sincdb.domain.conexao.repository.ConexaoRepository;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
+import com.api_sincdb.enums.TipoConexao;
 import com.api_sincdb.util.CriptoUtils;
 import com.api_sincdb.util.LeitorConfigSegura;
 
@@ -27,12 +30,16 @@ public class ConexaoService {
 
     private final ConexaoRepository repository;
     private final UsuarioRepository usuarioRepository;
+    private final ConexaoBanco conexaoBanco;
+    private final Map<String, String> certificadoCloudSenhaPendente = new ConcurrentHashMap<>();
 
     public ConexaoService(
             ConexaoRepository repository,
-            UsuarioRepository usuarioRepository) {
+            UsuarioRepository usuarioRepository,
+            ConexaoBanco conexaoBanco) {
         this.repository = repository;
         this.usuarioRepository = usuarioRepository;
+        this.conexaoBanco = conexaoBanco;
     }
 
     public ConexaoDTO salvar(ConexaoDTO dto) {
@@ -40,6 +47,8 @@ public class ConexaoService {
 
         String idEmpresa = exigirIdEmpresa();
         String idTenant = exigirIdTenant();
+
+        aplicarSenhaCloudPendente(dto);
 
         Conexao conexao = new Conexao();
         preencherConexao(conexao, dto);
@@ -59,7 +68,7 @@ public class ConexaoService {
         }
 
         repository.save(conexao);
-        ConexaoBanco.fecharTodos();
+        conexaoBanco.fecharTodos();
 
         return toDTO(conexao);
     }
@@ -67,6 +76,8 @@ public class ConexaoService {
     public ConexaoDTO atualizar(ConexaoDTO dto) {
         Usuario user = resolverUsuario();
         String idEmpresa = exigirIdEmpresa();
+
+        aplicarSenhaCloudPendente(dto);
 
         Conexao conexao = buscarConexaoObrigatoria(dto.getId(), idEmpresa, user.getId());
 
@@ -90,7 +101,7 @@ public class ConexaoService {
         }
 
         repository.save(conexao);
-        ConexaoBanco.fecharTodos();
+        conexaoBanco.fecharTodos();
 
         return toDTO(conexao);
     }
@@ -123,7 +134,7 @@ public class ConexaoService {
         conexao.setFl_padrao(true);
         repository.save(conexao);
 
-        ConexaoBanco.fecharTodos();
+        conexaoBanco.fecharTodos();
 
         return toDTO(conexao);
     }
@@ -144,7 +155,7 @@ public class ConexaoService {
             promoverPrimeiraConexaoAtiva(conexao.getId_empresa(), user.getId());
         }
 
-        ConexaoBanco.fecharTodos();
+        conexaoBanco.fecharTodos();
     }
 
     public Map<String, Object> uploadCertificado(MultipartFile arquivo) {
@@ -191,12 +202,14 @@ public class ConexaoService {
                         "Certificado invalido ou sem dados obrigatorios da conexao cloud.");
             }
 
+            registrarSenhaCloudPendente(cloudPassword);
+
             Map<String, Object> cloud = Map.of(
                     "db_cloud_host", cloudHost,
                     "db_cloud_port", cloudPort,
                     "db_cloud_user", cloudUser,
-                    "db_cloud_password", cloudPassword,
-                    "fl_admin", true);
+                    "fl_admin", true,
+                    "fl_cloud_password_defined", true);
 
             Map<String, Object> local = Map.of(
                     "db_local_host", valorJsonOuVazio(obj, "db_local_host", "local_host"),
@@ -224,6 +237,164 @@ public class ConexaoService {
         return LeitorConfigSegura.carregarConfiguracao(
                 "./config.enc",
                 segredo);
+    }
+
+    public Map<String, Object> testarConexao(ConexaoDTO dto) {
+        Usuario user = resolverUsuario();
+        String idEmpresa = exigirIdEmpresa();
+
+        Conexao conexao = montarConexaoParaTeste(dto, idEmpresa, user.getId());
+
+        Map<String, Object> cloud = conexaoBanco.testarConexaoJdbc(conexao, TipoConexao.CLOUD);
+        Map<String, Object> local = conexaoBanco.testarConexaoJdbc(conexao, TipoConexao.LOCAL);
+
+        boolean cloudOk = Boolean.TRUE.equals(cloud.get("ok"));
+        boolean localOk = Boolean.TRUE.equals(local.get("ok"));
+
+        Map<String, Object> resultado = new HashMap<>();
+        resultado.put("cloud", cloud);
+        resultado.put("local", local);
+        resultado.put("ok", cloudOk && localOk);
+        resultado.put("message", montarMensagemTeste(cloud, local, cloudOk, localOk));
+
+        return resultado;
+    }
+
+    private Conexao montarConexaoParaTeste(ConexaoDTO dto, String idEmpresa, String idUsuario) {
+        Conexao conexao;
+
+        if (dto.getId() != null && !dto.getId().isBlank()) {
+            conexao = buscarConexaoObrigatoria(dto.getId(), idEmpresa, idUsuario);
+        } else {
+            conexao = new Conexao();
+        }
+
+        preencherConexaoParaTeste(conexao, dto);
+        aplicarSenhaCloudPendenteParaTeste(conexao);
+        return conexao;
+    }
+
+    private void aplicarSenhaCloudPendente(ConexaoDTO dto) {
+        if (dto.getCloud() == null || senhaInformada(dto.getCloud().getDb_cloud_password())) {
+            return;
+        }
+
+        String senhaPendente = consumirSenhaCloudPendente();
+        if (senhaPendente != null) {
+            dto.getCloud().setDb_cloud_password(senhaPendente);
+        }
+    }
+
+    private void aplicarSenhaCloudPendenteParaTeste(Conexao conexao) {
+        if (senhaDefinida(conexao.getDb_cloud_password())) {
+            return;
+        }
+
+        String senhaPendente = obterSenhaCloudPendente();
+        if (senhaPendente != null) {
+            conexao.setDb_cloud_password(senhaPendente);
+        }
+    }
+
+    private void registrarSenhaCloudPendente(String senha) {
+        certificadoCloudSenhaPendente.put(chaveCertificadoPendente(), senha);
+    }
+
+    private String consumirSenhaCloudPendente() {
+        return certificadoCloudSenhaPendente.remove(chaveCertificadoPendente());
+    }
+
+    private String obterSenhaCloudPendente() {
+        return certificadoCloudSenhaPendente.get(chaveCertificadoPendente());
+    }
+
+    private String chaveCertificadoPendente() {
+        return exigirIdEmpresa() + ":" + resolverUsuario().getId();
+    }
+
+    private void preencherConexaoParaTeste(Conexao conexao, ConexaoDTO dto) {
+        if (dto.getCloud() != null) {
+            if (dto.getCloud().getDb_cloud_host() != null) {
+                conexao.setDb_cloud_host(dto.getCloud().getDb_cloud_host());
+            }
+            if (dto.getCloud().getDb_cloud_port() != null) {
+                conexao.setDb_cloud_port(dto.getCloud().getDb_cloud_port());
+            }
+            if (dto.getCloud().getDb_cloud_user() != null) {
+                conexao.setDb_cloud_user(dto.getCloud().getDb_cloud_user());
+            }
+            if (senhaInformada(dto.getCloud().getDb_cloud_password())) {
+                conexao.setDb_cloud_password(dto.getCloud().getDb_cloud_password());
+            }
+            if (dto.getCloud().getFl_admin() != null) {
+                conexao.setFl_admin(dto.getCloud().getFl_admin());
+            }
+            conexao.setDb_cloud_ssh_enabled(Boolean.TRUE.equals(dto.getCloud().getDb_cloud_ssh_enabled()));
+            if (dto.getCloud().getDb_cloud_ssh_host() != null) {
+                conexao.setDb_cloud_ssh_host(dto.getCloud().getDb_cloud_ssh_host());
+            }
+            if (dto.getCloud().getDb_cloud_ssh_port() != null) {
+                conexao.setDb_cloud_ssh_port(dto.getCloud().getDb_cloud_ssh_port());
+            }
+            if (dto.getCloud().getDb_cloud_ssh_user() != null) {
+                conexao.setDb_cloud_ssh_user(dto.getCloud().getDb_cloud_ssh_user());
+            }
+            if (senhaInformada(dto.getCloud().getDb_cloud_ssh_password())) {
+                conexao.setDb_cloud_ssh_password(dto.getCloud().getDb_cloud_ssh_password());
+            }
+        }
+
+        if (dto.getLocal() != null) {
+            if (dto.getLocal().getDb_local_host() != null) {
+                conexao.setDb_local_host(dto.getLocal().getDb_local_host());
+            }
+            if (dto.getLocal().getDb_local_port() != null) {
+                conexao.setDb_local_port(dto.getLocal().getDb_local_port());
+            }
+            if (dto.getLocal().getDb_local_user() != null) {
+                conexao.setDb_local_user(dto.getLocal().getDb_local_user());
+            }
+            if (senhaInformada(dto.getLocal().getDb_local_password())) {
+                conexao.setDb_local_password(dto.getLocal().getDb_local_password());
+            }
+            conexao.setDb_local_ssh_enabled(Boolean.TRUE.equals(dto.getLocal().getDb_local_ssh_enabled()));
+            if (dto.getLocal().getDb_local_ssh_host() != null) {
+                conexao.setDb_local_ssh_host(dto.getLocal().getDb_local_ssh_host());
+            }
+            if (dto.getLocal().getDb_local_ssh_port() != null) {
+                conexao.setDb_local_ssh_port(dto.getLocal().getDb_local_ssh_port());
+            }
+            if (dto.getLocal().getDb_local_ssh_user() != null) {
+                conexao.setDb_local_ssh_user(dto.getLocal().getDb_local_ssh_user());
+            }
+            if (senhaInformada(dto.getLocal().getDb_local_ssh_password())) {
+                conexao.setDb_local_ssh_password(dto.getLocal().getDb_local_ssh_password());
+            }
+        }
+    }
+
+    private boolean senhaInformada(String senha) {
+        return senha != null && !senha.isBlank() && !"*****".equals(senha.trim());
+    }
+
+    private String montarMensagemTeste(
+            Map<String, Object> cloud,
+            Map<String, Object> local,
+            boolean cloudOk,
+            boolean localOk) {
+        if (cloudOk && localOk) {
+            return "Cloud e Local conectados com sucesso.";
+        }
+
+        if (cloudOk) {
+            return "Cloud OK. Local: " + local.get("message");
+        }
+
+        if (localOk) {
+            return "Local OK. Cloud: " + cloud.get("message");
+        }
+
+        return "Cloud: " + cloud.get("message") + " | Local: " + local.get("message");
     }
 
     private boolean extensaoCertificadoPermitida(String nomeArquivo) {
@@ -314,15 +485,37 @@ public class ConexaoService {
             conexao.setDb_cloud_host(dto.getCloud().getDb_cloud_host());
             conexao.setDb_cloud_port(dto.getCloud().getDb_cloud_port());
             conexao.setDb_cloud_user(dto.getCloud().getDb_cloud_user());
-            conexao.setDb_cloud_password(dto.getCloud().getDb_cloud_password());
+            if (dto.getCloud().getDb_cloud_password() != null
+                    && !dto.getCloud().getDb_cloud_password().isBlank()) {
+                conexao.setDb_cloud_password(dto.getCloud().getDb_cloud_password());
+            }
             conexao.setFl_admin(dto.getCloud().getFl_admin());
+            conexao.setDb_cloud_ssh_enabled(Boolean.TRUE.equals(dto.getCloud().getDb_cloud_ssh_enabled()));
+            conexao.setDb_cloud_ssh_host(dto.getCloud().getDb_cloud_ssh_host());
+            conexao.setDb_cloud_ssh_port(dto.getCloud().getDb_cloud_ssh_port());
+            conexao.setDb_cloud_ssh_user(dto.getCloud().getDb_cloud_ssh_user());
+            if (dto.getCloud().getDb_cloud_ssh_password() != null
+                    && !dto.getCloud().getDb_cloud_ssh_password().isBlank()) {
+                conexao.setDb_cloud_ssh_password(dto.getCloud().getDb_cloud_ssh_password());
+            }
         }
 
         if (dto.getLocal() != null) {
             conexao.setDb_local_host(dto.getLocal().getDb_local_host());
             conexao.setDb_local_port(dto.getLocal().getDb_local_port());
             conexao.setDb_local_user(dto.getLocal().getDb_local_user());
-            conexao.setDb_local_password(dto.getLocal().getDb_local_password());
+            if (dto.getLocal().getDb_local_password() != null
+                    && !dto.getLocal().getDb_local_password().isBlank()) {
+                conexao.setDb_local_password(dto.getLocal().getDb_local_password());
+            }
+            conexao.setDb_local_ssh_enabled(Boolean.TRUE.equals(dto.getLocal().getDb_local_ssh_enabled()));
+            conexao.setDb_local_ssh_host(dto.getLocal().getDb_local_ssh_host());
+            conexao.setDb_local_ssh_port(dto.getLocal().getDb_local_ssh_port());
+            conexao.setDb_local_ssh_user(dto.getLocal().getDb_local_ssh_user());
+            if (dto.getLocal().getDb_local_ssh_password() != null
+                    && !dto.getLocal().getDb_local_ssh_password().isBlank()) {
+                conexao.setDb_local_ssh_password(dto.getLocal().getDb_local_ssh_password());
+            }
         }
     }
 
@@ -369,8 +562,15 @@ public class ConexaoService {
         cloud.setDb_cloud_host(conexao.getDb_cloud_host());
         cloud.setDb_cloud_port(conexao.getDb_cloud_port());
         cloud.setDb_cloud_user(conexao.getDb_cloud_user());
-        cloud.setDb_cloud_password(conexao.getDb_cloud_password());
+        cloud.setDb_cloud_password(null);
+        cloud.setFl_cloud_password_defined(senhaDefinida(conexao.getDb_cloud_password()));
         cloud.setFl_admin(conexao.getFl_admin());
+        cloud.setDb_cloud_ssh_enabled(conexao.getDb_cloud_ssh_enabled());
+        cloud.setDb_cloud_ssh_host(conexao.getDb_cloud_ssh_host());
+        cloud.setDb_cloud_ssh_port(conexao.getDb_cloud_ssh_port());
+        cloud.setDb_cloud_ssh_user(conexao.getDb_cloud_ssh_user());
+        cloud.setDb_cloud_ssh_password(null);
+        cloud.setFl_cloud_ssh_password_defined(senhaDefinida(conexao.getDb_cloud_ssh_password()));
 
         dto.setCloud(cloud);
 
@@ -379,10 +579,20 @@ public class ConexaoService {
         local.setDb_local_port(conexao.getDb_local_port());
         local.setDb_local_user(conexao.getDb_local_user());
         local.setDb_local_password(conexao.getDb_local_password());
+        local.setDb_local_ssh_enabled(conexao.getDb_local_ssh_enabled());
+        local.setDb_local_ssh_host(conexao.getDb_local_ssh_host());
+        local.setDb_local_ssh_port(conexao.getDb_local_ssh_port());
+        local.setDb_local_ssh_user(conexao.getDb_local_ssh_user());
+        local.setDb_local_ssh_password(null);
+        local.setFl_local_ssh_password_defined(senhaDefinida(conexao.getDb_local_ssh_password()));
 
         dto.setLocal(local);
 
         return dto;
+    }
+
+    private boolean senhaDefinida(String senha) {
+        return senha != null && !senha.isBlank();
     }
 
 }
