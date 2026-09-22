@@ -27,6 +27,7 @@ public class Usuario implements UserDetails, Serializable {
     private String login;
     private String senha;
     private String nome;
+    private String img = "";
     private String token = "";
 
     @DBRef(lazy = true) // lazy evita carregar tudo imediatamente, como FetchType.LAZY
@@ -83,6 +84,14 @@ public class Usuario implements UserDetails, Serializable {
 
     public void setNome(String nome) {
         this.nome = nome;
+    }
+
+    public String getImg() {
+        return img;
+    }
+
+    public void setImg(String img) {
+        this.img = img;
     }
 
     public List<Role> getRoles() {

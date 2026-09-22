@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.api_sincdb.context.TenantRuntimeContext;
+import com.api_sincdb.domain.empresa.repository.EmpresaRepository;
 import com.api_sincdb.domain.usuario.dto.PerfilDTO;
 import com.api_sincdb.domain.usuario.model.Usuario;
 import com.api_sincdb.domain.usuario.repository.UsuarioRepository;
@@ -39,6 +41,9 @@ public class PerfilController {
     @Autowired
     private AnexoService anexoService;
 
+    @Autowired
+    private EmpresaRepository empresaRepository;
+
     @GetMapping(value = "/{login}", produces = "application/json")
     public ResponseEntity<?> obterPerfil(@PathVariable String login) throws Exception {
 
@@ -54,9 +59,14 @@ public class PerfilController {
         perfilDTO.setId(userTemporario.getId());
         perfilDTO.setLogin(userTemporario.getLogin());
         perfilDTO.setNome(userTemporario.getNome());
-        // perfilDTO.setSenha(userTemporario.getSenha());
+        perfilDTO.setImg(userTemporario.getImg());
         perfilDTO.setRole(permissao);
         perfilDTO.setCargo("");
+
+        String idEmpresa = TenantRuntimeContext.getIdEmpresa();
+        if (idEmpresa != null && !idEmpresa.isBlank()) {
+            empresaRepository.findById(idEmpresa).ifPresent(empresa -> perfilDTO.setEmpresa(empresa.getNm_empresa()));
+        }
 
         return new ResponseEntity<>(perfilDTO, HttpStatus.OK);
     }
@@ -72,6 +82,11 @@ public class PerfilController {
 
         userTemporario.setNome(usuario.getNome());
         service.inserirSenhaCriptografada(userTemporario, usuario.getSenha());
+
+        if (usuario.getImg() != null) {
+            String img = usuario.getImg().trim();
+            userTemporario.setImg(img.isEmpty() ? null : img);
+        }
 
         Usuario usuarioSalvo = usuarioRepository.save(userTemporario);
 

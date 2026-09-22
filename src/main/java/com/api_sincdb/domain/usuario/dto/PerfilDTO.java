@@ -10,6 +10,7 @@ public class PerfilDTO {
     private String img;
     private String role;
     private String cargo;
+    private String empresa;
 
     public PerfilDTO() {
     
@@ -79,5 +80,13 @@ public class PerfilDTO {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getEmpresa() {
+        return empresa;
+    }
+
+    public void setEmpresa(String empresa) {
+        this.empresa = empresa;
     }
 }
