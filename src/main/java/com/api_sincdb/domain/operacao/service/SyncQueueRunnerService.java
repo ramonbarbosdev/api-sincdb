@@ -1,17 +1,17 @@
 package com.api_sincdb.domain.operacao.service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.api_sincdb.domain.operacao.model.SyncQueueItem;
-import com.api_sincdb.enums.SyncQueueItemStatus;
 import com.api_sincdb.enums.TipoOperacao;
+import com.api_sincdb.util.ProcessoManager;
 import com.api_sincdb.util.SyncCacheKeys;
 import com.api_sincdb.util.SyncExecutionGuard;
 
@@ -33,8 +33,33 @@ public class SyncQueueRunnerService {
     @Autowired
     private SyncExecutionGuard syncExecutionGuard;
 
-    public void processItem(String token, SyncQueueItem item) {
-        syncExecutionGuard.run(() -> executeItem(token, item));
+    @Autowired
+    private ProcessoManager processoManager;
+
+    public void processItem(String token, SyncQueueItem item) throws InterruptedException {
+        AtomicReference<Exception> failure = new AtomicReference<>();
+
+        processoManager.iniciarProcesso(() -> {
+            try {
+                syncExecutionGuard.run(() -> executeItem(token, item));
+            } catch (Exception e) {
+                failure.set(e);
+            }
+        });
+
+        while (processoManager.isExecutando()) {
+            Thread.sleep(50);
+        }
+
+        if (failure.get() != null) {
+            Exception e = failure.get();
+            if (e instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new RuntimeException(
+                    e.getMessage() != null ? e.getMessage() : "Falha ao processar item da fila",
+                    e);
+        }
     }
 
     private void executeItem(String token, SyncQueueItem item) {

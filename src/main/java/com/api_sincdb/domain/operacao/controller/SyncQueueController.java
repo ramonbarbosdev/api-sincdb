@@ -67,8 +67,8 @@ public class SyncQueueController {
   public ResponseEntity<Map<String, Boolean>> run(HttpServletRequest request) {
     String token = jwtTokenAutenticacaoService.obterTokenHeaderOuCookie(request);
     String usuario = jwtHelper.extrairUsuario(token);
-    syncQueueService.start(usuario, token);
-    return ResponseEntity.ok(Map.of("started", true));
+    boolean started = syncQueueService.start(usuario, token);
+    return ResponseEntity.ok(Map.of("started", started));
   }
 
   @DeleteMapping(value = "/{id}")

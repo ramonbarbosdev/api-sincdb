@@ -101,17 +101,32 @@ public class SyncQueueService {
     }
   }
 
-  public void start(String usuario, String token) {
+  public boolean start(String usuario, String token) {
     if (runningUsers.contains(usuario)) {
-      return;
+      return false;
     }
 
+    recoverStaleRunningItems(usuario);
+
     if (!repository.existsByUsuarioAndStatus(usuario, SyncQueueItemStatus.PENDING)) {
-      return;
+      return false;
     }
 
     runningUsers.add(usuario);
     executor.submit(() -> drainQueue(usuario, token));
+    return true;
+  }
+
+  /** Itens RUNNING sem worker (ex.: reinício da API) bloqueavam a fila para sempre. */
+  private void recoverStaleRunningItems(String usuario) {
+    List<SyncQueueItem> stale = repository.findByUsuarioAndStatusInOrderByCreatedAtAsc(
+        usuario,
+        List.of(SyncQueueItemStatus.RUNNING));
+    for (SyncQueueItem item : stale) {
+      markError(
+          item,
+          "Execução interrompida (servidor reiniciado ou falha anterior). Remova ou enfileire novamente.");
+    }
   }
 
   private void drainQueue(String usuario, String token) {
