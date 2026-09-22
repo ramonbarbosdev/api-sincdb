@@ -16,6 +16,8 @@ public class ForumPostResponse {
     private String descricao;
     private String idUsuario;
     private String nomeUsuario;
+    /** URL da foto de perfil do autor (quando cadastrada). */
+    private String imgUsuario;
     private ForumPostStatus statusPost;
     private int curtidasCount;
     private boolean curtidoPorMim;

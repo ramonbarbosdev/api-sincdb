@@ -317,6 +317,8 @@ public class ForumPostService {
         dto.setDescricao(post.getDescricao());
         dto.setIdUsuario(post.getIdUsuario());
         dto.setNomeUsuario(post.getNomeUsuario());
+        Usuario autor = context.buscarPorChaveArmazenada(post.getIdUsuario()).orElse(null);
+        dto.setImgUsuario(context.imgPerfil(autor));
         dto.setStatusPost(post.getStatusPost());
         dto.setCurtidasCount(post.getCurtidasCount());
         dto.setCurtidoPorMim(curtidoPorMim);

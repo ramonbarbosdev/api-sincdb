@@ -105,6 +105,14 @@ public class ForumContextHelper {
         return "Usuário";
     }
 
+    public String imgPerfil(Usuario usuario) {
+        if (usuario == null || usuario.getImg() == null) {
+            return null;
+        }
+        String img = usuario.getImg().trim();
+        return img.isEmpty() ? null : img;
+    }
+
     public boolean pareceIdMongo(String value) {
         return value != null && value.matches("[a-f0-9A-F]{24}");
     }
