@@ -117,6 +117,27 @@ public class ForumPostService {
         postRepository.deleteById(id);
     }
 
+    public ForumPostResponse patchDestaque(String id, boolean destacar, String role) {
+        if (!context.isDev(role)) {
+            throw new IllegalStateException("Acesso negado.");
+        }
+        ForumPost post = buscarObrigatorio(id);
+        if (destacar) {
+            post.setDestaqueManual(true);
+            post.setDestaqueExcluido(false);
+        } else {
+            post.setDestaqueManual(false);
+            post.setDestaqueExcluido(true);
+        }
+        ForumPost saved = postRepository.save(post);
+        Set<String> destaqueIds = calcularIdsDestaque(postRepository.findAll());
+        return toResponse(
+                saved,
+                role,
+                destaqueIds.contains(saved.getId()),
+                curtidoPorMim(saved.getId()));
+    }
+
     public ForumPostResponse patchStatus(String id, ForumPostStatus status, String role) {
         if (!context.isDev(role)) {
             throw new IllegalStateException("Acesso negado.");
@@ -243,10 +264,18 @@ public class ForumPostService {
 
     private Set<String> calcularIdsDestaque(List<ForumPost> posts) {
         Set<String> ids = new HashSet<>();
-        posts.stream()
+        for (ForumPost p : posts) {
+            if (Boolean.TRUE.equals(p.getDestaqueManual())) {
+                ids.add(p.getId());
+            }
+        }
+        List<ForumPost> auto = posts.stream()
+                .filter(p -> !Boolean.TRUE.equals(p.getDestaqueExcluido()))
+                .collect(Collectors.toList());
+        auto.stream()
                 .filter(p -> p.getCurtidasCount() >= DESTAQUE_MIN_CURTIDAS)
                 .forEach(p -> ids.add(p.getId()));
-        posts.stream()
+        auto.stream()
                 .sorted(Comparator.comparingInt(ForumPost::getCurtidasCount).reversed()
                         .thenComparing(ForumPost::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .limit(DESTAQUE_TOP_N)
@@ -292,6 +321,8 @@ public class ForumPostService {
         dto.setCurtidasCount(post.getCurtidasCount());
         dto.setCurtidoPorMim(curtidoPorMim);
         dto.setEmDestaque(emDestaque);
+        dto.setDestaqueManual(Boolean.TRUE.equals(post.getDestaqueManual()));
+        dto.setDestaqueExcluido(Boolean.TRUE.equals(post.getDestaqueExcluido()));
         dto.setCreatedAt(post.getCreatedAt());
         boolean podeGerenciar = context.podeGerenciarPost(post, role);
         dto.setPodeEditar(podeGerenciar);

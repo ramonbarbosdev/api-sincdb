@@ -20,6 +20,8 @@ public class ForumPostResponse {
     private int curtidasCount;
     private boolean curtidoPorMim;
     private boolean emDestaque;
+    private boolean destaqueManual;
+    private boolean destaqueExcluido;
     private boolean podeEditar;
     private boolean podeExcluir;
 

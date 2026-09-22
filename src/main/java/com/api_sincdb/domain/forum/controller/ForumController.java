@@ -120,6 +120,27 @@ public class ForumController {
         return ResponseEntity.ok(curtidaService.toggle(id));
     }
 
+    @PatchMapping(value = "/posts/{id}/destaque", consumes = "application/json", produces = "application/json")
+    public ResponseEntity<?> patchDestaquePost(
+            @PathVariable String id,
+            @RequestBody Map<String, Boolean> body,
+            HttpServletRequest request) {
+        if (!postServiceIsDev(request)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "Acesso negado."));
+        }
+        try {
+            Boolean destacar = body.get("destacar");
+            if (destacar == null) {
+                return ResponseEntity.badRequest().body(Map.of("message", "Informe destacar: true ou false."));
+            }
+            return ResponseEntity.ok(postService.patchDestaque(id, destacar, role(request)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
+    }
+
     @PatchMapping(value = "/posts/{id}/status", consumes = "application/json", produces = "application/json")
     public ResponseEntity<?> patchStatusPost(
             @PathVariable String id,

@@ -36,6 +36,12 @@ public class ForumPost {
 
     private int curtidasCount;
 
+    /** Dev: fixa o post em destaque independente de curtidas. */
+    private Boolean destaqueManual;
+
+    /** Dev: impede destaque automático por curtidas/top 3. */
+    private Boolean destaqueExcluido;
+
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "dd/MM/yyyy HH:mm:ss")
     private LocalDateTime createdAt;
 }
