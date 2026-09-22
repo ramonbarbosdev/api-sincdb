@@ -10,11 +10,13 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api_sincdb.domain.operacao.dto.SyncQueueEnqueueRequest;
+import com.api_sincdb.domain.operacao.dto.SyncQueueReorderRequest;
 import com.api_sincdb.domain.operacao.dto.SyncQueueStatusResponse;
 import com.api_sincdb.domain.operacao.model.SyncQueueItem;
 import com.api_sincdb.domain.operacao.service.SyncQueueService;
@@ -60,6 +62,36 @@ public class SyncQueueController {
       return ResponseEntity.status(HttpStatus.CONFLICT).build();
     } catch (IllegalArgumentException e) {
       return ResponseEntity.badRequest().build();
+    }
+  }
+
+  @PutMapping(value = "/reorder", consumes = "application/json", produces = "application/json")
+  public ResponseEntity<List<SyncQueueItem>> reorder(
+      @RequestBody SyncQueueReorderRequest body,
+      HttpServletRequest request) {
+    String usuario = usuario(request);
+    try {
+      List<String> ids = body.getOrderedIds() != null ? body.getOrderedIds() : List.of();
+      return ResponseEntity.ok(syncQueueService.reorder(usuario, ids));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.badRequest().build();
+    } catch (IllegalStateException e) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).build();
+    }
+  }
+
+  @PutMapping(value = "/{id}", consumes = "application/json", produces = "application/json")
+  public ResponseEntity<SyncQueueItem> update(
+      @PathVariable String id,
+      @RequestBody SyncQueueEnqueueRequest body,
+      HttpServletRequest request) {
+    String usuario = usuario(request);
+    try {
+      return ResponseEntity.ok(syncQueueService.update(usuario, id, body));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.notFound().build();
+    } catch (IllegalStateException e) {
+      return ResponseEntity.status(HttpStatus.CONFLICT).build();
     }
   }
 

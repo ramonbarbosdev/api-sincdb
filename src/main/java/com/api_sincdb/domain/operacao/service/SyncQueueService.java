@@ -1,6 +1,7 @@
 package com.api_sincdb.domain.operacao.service;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -66,7 +67,7 @@ public class SyncQueueService {
   public SyncQueueItem enqueue(String usuario, SyncQueueEnqueueRequest request) {
     validateEnqueueRequest(request);
 
-    if (hasActiveScope(usuario, request)) {
+    if (hasActiveScope(usuario, request, null)) {
       throw new IllegalStateException("Este escopo já está na fila ou em execução.");
     }
 
@@ -82,6 +83,57 @@ public class SyncQueueService {
     item.setCreatedAt(LocalDateTime.now());
 
     return repository.save(item);
+  }
+
+  public SyncQueueItem update(String usuario, String itemId, SyncQueueEnqueueRequest request) {
+    validateEnqueueRequest(request);
+    SyncQueueItem item = requireOwnedItem(usuario, itemId);
+    if (item.getStatus() != SyncQueueItemStatus.PENDING) {
+      throw new IllegalStateException("Só é possível editar itens pendentes na fila.");
+    }
+    if (hasActiveScope(usuario, request, itemId)) {
+      throw new IllegalStateException("Este escopo já está na fila ou em execução.");
+    }
+
+    item.setOperacao(request.getOperacao());
+    item.setBaseNome(request.getBase());
+    item.setSchemaNome(request.getEsquema());
+    item.setTabela(request.getTabela());
+    item.setTabelas(request.getTabelas() != null ? request.getTabelas() : List.of());
+    item.setLabel(buildLabel(request));
+    item.setErrorMessage(null);
+
+    return repository.save(item);
+  }
+
+  public List<SyncQueueItem> reorder(String usuario, List<String> orderedIds) {
+    if (orderedIds == null || orderedIds.isEmpty()) {
+      throw new IllegalArgumentException("Informe a ordem dos itens pendentes.");
+    }
+
+    List<SyncQueueItem> pending = repository.findByUsuarioAndStatusInOrderByCreatedAtAsc(
+        usuario,
+        List.of(SyncQueueItemStatus.PENDING));
+    Set<String> pendingIds = new HashSet<>();
+    for (SyncQueueItem item : pending) {
+      pendingIds.add(item.getId());
+    }
+
+    if (orderedIds.size() != pendingIds.size() || !pendingIds.containsAll(orderedIds)) {
+      throw new IllegalArgumentException("A ordem informada não corresponde aos itens pendentes.");
+    }
+
+    LocalDateTime base = LocalDateTime.now().minusSeconds(orderedIds.size() + 1L);
+    for (int i = 0; i < orderedIds.size(); i++) {
+      SyncQueueItem item = requireOwnedItem(usuario, orderedIds.get(i));
+      if (item.getStatus() != SyncQueueItemStatus.PENDING) {
+        throw new IllegalStateException("Só é possível reordenar itens pendentes.");
+      }
+      item.setCreatedAt(base.plusSeconds(i));
+      repository.save(item);
+    }
+
+    return listForUser(usuario);
   }
 
   public void remove(String usuario, String itemId) {
@@ -203,10 +255,12 @@ public class SyncQueueService {
     }
   }
 
-  private boolean hasActiveScope(String usuario, SyncQueueEnqueueRequest request) {
+  private boolean hasActiveScope(String usuario, SyncQueueEnqueueRequest request, String excludeItemId) {
     String scopeKey = scopeKeyForRequest(request);
     List<SyncQueueItem> active = repository.findByUsuarioAndStatusInOrderByCreatedAtAsc(usuario, ACTIVE_STATUSES);
-    return active.stream().anyMatch(item -> scopeKeyForItem(item).equals(scopeKey));
+    return active.stream()
+        .filter(item -> excludeItemId == null || !excludeItemId.equals(item.getId()))
+        .anyMatch(item -> scopeKeyForItem(item).equals(scopeKey));
   }
 
   private String scopeKeyForRequest(SyncQueueEnqueueRequest request) {
