@@ -77,14 +77,17 @@ public class ColunaBackfillService {
                             "Erro ao rollback após backfill: " + rollbackEx.getMessage()));
                 }
 
+                String resumo = com.api_sincdb.util.SyncErrorFormatter.formatarErroSql(
+                        "Preenchimento de Colunas",
+                        ref.tabela + "." + ref.coluna,
+                        e);
                 Map<String, String> detalhe = new LinkedHashMap<>();
                 detalhe.put("tabela", ref.tabela);
                 detalhe.put("acao", "Preenchimento de Colunas");
-                detalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
+                detalhe.put("erro", resumo);
                 detalhes.add(detalhe);
 
-                logPublisher.enviarLog(TerminalLog.error(
-                        "Falha ao preencher " + ref.tabela + "." + ref.coluna + ": " + e.getMessage()));
+                logPublisher.enviarLog(TerminalLog.error(resumo));
             }
         }
     }

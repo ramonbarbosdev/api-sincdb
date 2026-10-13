@@ -212,7 +212,10 @@ public class EstruturaService {
 
             List<String> listaErro = new ArrayList<>();
             for (Map<String, String> erro : detalhes) {
-                listaErro.add(erro.get("erro"));
+                String msg = com.api_sincdb.util.SyncErrorFormatter.mensagemDeDetalhe(erro);
+                if (msg != null && !msg.isBlank()) {
+                    listaErro.add(msg);
+                }
             }
 
             response.put("sucesso", true);
@@ -231,7 +234,7 @@ public class EstruturaService {
                     usuario,
                     "Erro ao sincronizar scripts: " + e.getMessage(), TipoOperacao.ESTRUTURA);
 
-            utilsSync.tratarErroSincronizacao(response, e);
+            utilsSync.tratarErroSincronizacao(response, e, detalhes);
         }
 
         return response;

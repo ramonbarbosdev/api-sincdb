@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import com.api_sincdb.domain.operacao.model.TerminalLog;
 import com.api_sincdb.domain.parametro.service.ParametroMasterService;
+import com.api_sincdb.util.SyncErrorFormatter;
 import com.api_sincdb.websocket.LogPublisher;
 
 @Service
@@ -34,6 +35,9 @@ public class OperacaoBancoService {
 
     @Autowired
     private ColunaBackfillService colunaBackfillService;
+
+    private String ultimaEtapaErro;
+    private String ultimoObjetoErro;
 
     private static final List<String> ORDEM_GRUPOS_ESTRUTURA = List.of(
             "Schemas",
@@ -67,6 +71,7 @@ public class OperacaoBancoService {
             List<Map<String, String>> detalhes) throws IOException, SQLException {
 
         try {
+            limparContextoErro();
             logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
 
             int totalQueries = queries.values().stream().mapToInt(List::size).sum();
@@ -128,7 +133,7 @@ public class OperacaoBancoService {
     public void executarQueriesEmLotes(Connection conexao, HashMap<String, List<String>> queries,
             List<Map<String, String>> detalhes) throws IOException, SQLException {
         try {
-
+            limparContextoErro();
             logPublisher.enviarLog(TerminalLog.warn("Iniciando sincronização"));
 
 
@@ -229,17 +234,7 @@ public class OperacaoBancoService {
                     conexao.commit();
                 }
             } catch (SQLException e) {
-
-                logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (" + tipo + "):"));
-                logPublisher.enviarLog(TerminalLog.error(query));
-
-                Map<String, String> criarDetalhe = new LinkedHashMap<>();
-                criarDetalhe.put("tabela", tabela);
-                criarDetalhe.put("acao", tipo);
-                criarDetalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
-                detalhes.add(criarDetalhe);
-
-                logPublisher.enviarLog(TerminalLog.error(e.getMessage() + " | SQLState: " + e.getSQLState()));
+                registrarErroQuery(tipo, tabela, query, e, detalhes);
 
                 if (commitPorStatement) {
                     try {
@@ -300,15 +295,7 @@ public class OperacaoBancoService {
                         continue;
                     }
 
-                    logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (Views):"));
-                    logPublisher.enviarLog(TerminalLog.error(query));
-                    logPublisher.enviarLog(TerminalLog.error(e.getMessage() + " | SQLState: " + e.getSQLState()));
-
-                    Map<String, String> criarDetalhe = new LinkedHashMap<>();
-                    criarDetalhe.put("tabela", tabela);
-                    criarDetalhe.put("acao", "Views");
-                    criarDetalhe.put("erro", e.getMessage() + " | SQLState: " + e.getSQLState());
-                    detalhes.add(criarDetalhe);
+                    registrarErroQuery("Views", tabela, query, e, detalhes);
 
                     if (!continuarEmErro) {
                         throw e;
@@ -329,16 +316,24 @@ public class OperacaoBancoService {
             // Sem progresso em 2 passagens: dependência realmente inexistente
             if (semProgresso >= 2) {
                 for (String query : adiadas) {
-                    logPublisher.enviarLog(TerminalLog.error("ERRO AO EXECUTAR QUERY (Views):"));
-                    logPublisher.enviarLog(TerminalLog.error(query));
-                    logPublisher.enviarLog(TerminalLog.error(
-                            "Dependência ausente após retentativas | SQLState: 42P01"));
+                    String tabelaView = extrairNomeTabelaDaQuery(query);
+                    String resumo = SyncErrorFormatter.formatarErroGenerico(
+                            "Views",
+                            tabelaView,
+                            "Dependência ausente após retentativas",
+                            "42P01");
+                    ultimaEtapaErro = "Views";
+                    ultimoObjetoErro = tabelaView;
+                    logPublisher.enviarLog(TerminalLog.error(resumo));
+                    String trecho = SyncErrorFormatter.truncarSqlParaLog(query, 400);
+                    if (!trecho.isEmpty()) {
+                        logPublisher.enviarLog(TerminalLog.info("Script: " + trecho));
+                    }
 
                     Map<String, String> criarDetalhe = new LinkedHashMap<>();
-                    criarDetalhe.put("tabela", extrairNomeTabelaDaQuery(query));
+                    criarDetalhe.put("tabela", tabelaView);
                     criarDetalhe.put("acao", "Views");
-                    criarDetalhe.put("erro",
-                            "Dependência ausente após retentativas | SQLState: 42P01");
+                    criarDetalhe.put("erro", resumo);
                     detalhes.add(criarDetalhe);
 
                     if (!continuarEmErro) {
@@ -380,7 +375,8 @@ public class OperacaoBancoService {
     }
 
     private void handleTransactionFailure(Connection conexao, SQLException e) throws SQLException {
-        logPublisher.enviarLog(TerminalLog.error("Falha na transação geral: " + e.getMessage()));
+        String resumo = SyncErrorFormatter.formatarFalhaTransacao(e, ultimaEtapaErro, ultimoObjetoErro);
+        logPublisher.enviarLog(TerminalLog.error(resumo));
 
         try {
             conexao.rollback();
@@ -388,8 +384,37 @@ public class OperacaoBancoService {
             logPublisher.enviarLog(TerminalLog.error("Erro ao tentar rollback: " + ex.getMessage()));
         }
 
-        processoService.enviarProgresso("Erro", 0, "Falha na sincronização: " + e.getMessage(), null);
+        processoService.enviarProgresso("Erro", 0, resumo, ultimoObjetoErro);
         throw e;
+    }
+
+    private void limparContextoErro() {
+        ultimaEtapaErro = null;
+        ultimoObjetoErro = null;
+    }
+
+    private void registrarErroQuery(
+            String etapa,
+            String tabela,
+            String query,
+            SQLException e,
+            List<Map<String, String>> detalhes) throws IOException {
+
+        String resumo = SyncErrorFormatter.formatarErroSql(etapa, tabela, e);
+        ultimaEtapaErro = etapa;
+        ultimoObjetoErro = tabela;
+
+        logPublisher.enviarLog(TerminalLog.error(resumo));
+        String trecho = SyncErrorFormatter.truncarSqlParaLog(query, 400);
+        if (!trecho.isEmpty()) {
+            logPublisher.enviarLog(TerminalLog.info("Script: " + trecho));
+        }
+
+        Map<String, String> criarDetalhe = new LinkedHashMap<>();
+        criarDetalhe.put("tabela", tabela);
+        criarDetalhe.put("acao", etapa);
+        criarDetalhe.put("erro", resumo);
+        detalhes.add(criarDetalhe);
     }
 
 }

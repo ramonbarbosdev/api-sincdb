@@ -197,7 +197,7 @@ public class DadosService {
 
             List<String> listaErro = new ArrayList<>();
             for (Map<String, String> erro : detalhes) {
-                String mensagem = erro.get("erro");
+                String mensagem = com.api_sincdb.util.SyncErrorFormatter.mensagemDeDetalhe(erro);
                 if (mensagem != null && !mensagem.isBlank()) {
                     listaErro.add(mensagem);
                 }
@@ -229,7 +229,7 @@ public class DadosService {
                     usuario,
                     "Erro ao sincronizar scripts: " + e.getMessage(), TipoOperacao.DADOS);
 
-            utilsSync.tratarErroSincronizacao(response, e);
+            utilsSync.tratarErroSincronizacao(response, e, detalhes);
         }
 
         return response;

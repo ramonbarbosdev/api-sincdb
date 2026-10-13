@@ -37,6 +37,7 @@ public class CriacaoTabelaEstruturaService {
 
         // Detecta colunas auto-incremento
         Set<String> colunasIdentity = obterColunasIdentity(conexao, schema, nomeTabela);
+        Map<String, String> colunasGeradas = obterColunasGeradas(conexao, schema, nomeTabela);
 
         try (ResultSet columns = metaData.getColumns(null, schema, nomeTabela, null)) {
 
@@ -48,6 +49,7 @@ public class CriacaoTabelaEstruturaService {
                 int decimalDigits = columns.getInt("DECIMAL_DIGITS");
                 boolean isNullable = columns.getInt("NULLABLE") == DatabaseMetaData.columnNullable;
                 String defaultValue = columns.getString("COLUMN_DEF");
+                String expressaoGerada = colunasGeradas.get(colName);
 
                 StringBuilder coluna = new StringBuilder();
                 coluna.append(colName).append(" ");
@@ -60,13 +62,12 @@ public class CriacaoTabelaEstruturaService {
                         decimalDigits,
                         colunasIdentity.contains(colName));
 
-                // ---- NULLABLE ----
-                if (!isNullable) {
-                    coluna.append(" NOT NULL");
-                }
-
-                // ---- DEFAULT (somente se NÃO for identity) ----
-                if (!colunasIdentity.contains(colName)
+                // ---- COLUNA GERADA (STORED); não usar DEFAULT com expressão que referencia outras colunas ----
+                if (expressaoGerada != null && !expressaoGerada.isBlank()) {
+                    coluna.append(" GENERATED ALWAYS AS (")
+                            .append(expressaoGerada)
+                            .append(") STORED");
+                } else if (!colunasIdentity.contains(colName)
                         && defaultValue != null
                         && !defaultValue.isBlank()) {
 
@@ -76,6 +77,11 @@ public class CriacaoTabelaEstruturaService {
                     } else {
                         coluna.append(" DEFAULT ").append(defaultValue);
                     }
+                }
+
+                // ---- NULLABLE ----
+                if (!isNullable) {
+                    coluna.append(" NOT NULL");
                 }
 
                 colunasDDL.add(coluna.toString());
@@ -136,6 +142,39 @@ public class CriacaoTabelaEstruturaService {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     resultado.add(rs.getString("column_name"));
+                }
+            }
+        }
+
+        return resultado;
+    }
+
+    private Map<String, String> obterColunasGeradas(
+            Connection conexao,
+            String schema,
+            String tabela) throws SQLException {
+
+        Map<String, String> resultado = new HashMap<>();
+
+        String sql = """
+                SELECT column_name, generation_expression
+                FROM information_schema.columns
+                WHERE table_schema = ?
+                  AND table_name = ?
+                  AND is_generated = 'ALWAYS'
+                """;
+
+        try (PreparedStatement ps = conexao.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, tabela);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String nome = rs.getString("column_name");
+                    String expr = rs.getString("generation_expression");
+                    if (nome != null && expr != null && !expr.isBlank()) {
+                        resultado.put(nome, expr.trim());
+                    }
                 }
             }
         }
