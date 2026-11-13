@@ -9,6 +9,8 @@ public class Coluna {
     private String defaultValor;
 
     private boolean autoIncrement;
+    private boolean gerada;
+    private String expressaoGerada;
 
     // Getters e Setters
     public String getNome() {
@@ -49,5 +51,21 @@ public class Coluna {
 
     public void setAutoIncrement(boolean autoIncrement) {
         this.autoIncrement = autoIncrement;
+    }
+
+    public boolean isGerada() {
+        return gerada;
+    }
+
+    public void setGerada(boolean gerada) {
+        this.gerada = gerada;
+    }
+
+    public String getExpressaoGerada() {
+        return expressaoGerada;
+    }
+
+    public void setExpressaoGerada(String expressaoGerada) {
+        this.expressaoGerada = expressaoGerada;
     }
 }

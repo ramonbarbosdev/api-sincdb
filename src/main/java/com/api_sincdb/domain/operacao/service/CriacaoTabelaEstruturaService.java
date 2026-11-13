@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import com.api_sincdb.domain.operacao.model.TipoSQLInfo;
 import com.api_sincdb.util.DicionarioTipoSql;
+import com.api_sincdb.util.MetadadosColunaPostgres;
 import com.api_sincdb.util.UtilsSync;
 
 @Service
@@ -37,7 +38,9 @@ public class CriacaoTabelaEstruturaService {
         boolean needsUuidOssp = false;
 
         // Detecta colunas auto-incremento
-        Set<String> colunasIdentity = obterColunasIdentity(conexao, schema, nomeTabela);
+        Set<String> colunasIdentity = MetadadosColunaPostgres.carregarColunasIdentity(conexao, schema, nomeTabela);
+        Map<String, String> colunasGeradas = MetadadosColunaPostgres.carregarExpressoesGeradas(
+                conexao, schema, nomeTabela);
 
         try (ResultSet columns = metaData.getColumns(null, schema, nomeTabela, null)) {
 
@@ -61,22 +64,23 @@ public class CriacaoTabelaEstruturaService {
                         decimalDigits,
                         colunasIdentity.contains(colName));
 
-                // ---- NULLABLE ----
-                if (!isNullable) {
-                    coluna.append(" NOT NULL");
-                }
+                String expressaoGerada = colunasGeradas.get(colName);
 
-                // ---- DEFAULT (somente se NÃO for identity) ----
-                if (!colunasIdentity.contains(colName)
+                if (expressaoGerada != null) {
+                    coluna.append(MetadadosColunaPostgres.clausulaGeradaArmazenada(expressaoGerada));
+                } else if (!colunasIdentity.contains(colName)
                         && defaultValue != null
                         && !defaultValue.isBlank()) {
-
                     if (defaultValue.toLowerCase().contains("uuid_generate_v4")) {
                         needsUuidOssp = true;
                         coluna.append(" DEFAULT uuid_generate_v4()");
                     } else {
                         coluna.append(" DEFAULT ").append(defaultValue);
                     }
+                }
+
+                if (!isNullable) {
+                    coluna.append(" NOT NULL");
                 }
 
                 colunasDDL.add(coluna.toString());
@@ -110,38 +114,6 @@ public class CriacaoTabelaEstruturaService {
                 .append("\n);");
 
         return sql.toString();
-    }
-
-    private Set<String> obterColunasIdentity(
-            Connection conexao,
-            String schema,
-            String tabela) throws SQLException {
-
-        Set<String> resultado = new HashSet<>();
-
-        String sql = """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = ?
-                  AND table_name = ?
-                  AND (
-                      is_identity = 'YES'
-                      OR column_default LIKE 'nextval(%'
-                  )
-                """;
-
-        try (PreparedStatement ps = conexao.prepareStatement(sql)) {
-            ps.setString(1, schema);
-            ps.setString(2, tabela);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    resultado.add(rs.getString("column_name"));
-                }
-            }
-        }
-
-        return resultado;
     }
 
     private void montarTipoColuna(

@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import com.api_sincdb.domain.operacao.model.Coluna;
 import com.api_sincdb.domain.operacao.model.ResultadoComparacao;
 import com.api_sincdb.domain.operacao.model.TipoSQLInfo;
 import com.api_sincdb.util.DicionarioTipoSql;
+import com.api_sincdb.util.MetadadosColunaPostgres;
 import com.api_sincdb.util.UtilsSync;
 
 @Service
@@ -59,12 +61,17 @@ public class AtualizarEstruturaService {
         String schema = utilsSync.extrairSchema(nomeTabela);
         String tabela = utilsSync.extrairTabela(nomeTabela);
 
+        Set<String> colunasIdentity = MetadadosColunaPostgres.carregarColunasIdentity(conexao, schema, tabela);
+        Map<String, String> colunasGeradas = MetadadosColunaPostgres.carregarExpressoesGeradas(
+                conexao, schema, tabela);
+
         try (ResultSet colunas = metaData.getColumns(null, schema, tabela, null)) {
 
             while (colunas.next()) {
 
                 Coluna coluna = new Coluna();
-                coluna.setNome(colunas.getString("COLUMN_NAME"));
+                String nomeColuna = colunas.getString("COLUMN_NAME");
+                coluna.setNome(nomeColuna);
                 coluna.setNullable(
                         colunas.getInt("NULLABLE") == DatabaseMetaData.columnNullable);
 
@@ -73,16 +80,20 @@ public class AtualizarEstruturaService {
 
                 String tipoOriginal = colunas.getString("TYPE_NAME").toLowerCase();
 
-                // SERIAL NÃO É TIPO
                 if (tipoOriginal.startsWith("serial")) {
                     tipoOriginal = "integer";
                 }
 
-                // DETECTA AUTO-INCREMENTO (serial / identity)
-                boolean autoIncrement = defaultValor != null &&
-                        defaultValor.toLowerCase().startsWith("nextval(");
-
+                boolean autoIncrement = colunasIdentity.contains(nomeColuna)
+                        || (defaultValor != null && defaultValor.toLowerCase().startsWith("nextval("));
                 coluna.setAutoIncrement(autoIncrement);
+
+                String expressaoGerada = colunasGeradas.get(nomeColuna);
+                if (expressaoGerada != null) {
+                    coluna.setGerada(true);
+                    coluna.setExpressaoGerada(expressaoGerada);
+                    coluna.setDefaultValor(null);
+                }
 
                 TipoSQLInfo tipoInfo = DicionarioTipoSql.getTipo(tipoOriginal);
                 coluna.setTipo(tipoInfo.getTipo());
@@ -120,8 +131,10 @@ public class AtualizarEstruturaService {
                         .append(" ADD COLUMN ").append(nomeColuna)
                         .append(" ").append(colunaCloud.getTipo());
 
-                // DEFAULT no ADD COLUMN preenche linhas existentes e permite NOT NULL depois
-                if (!colunaCloud.isAutoIncrement()
+                if (colunaCloud.isGerada()) {
+                    addColumn.append(
+                            MetadadosColunaPostgres.clausulaGeradaArmazenada(colunaCloud.getExpressaoGerada()));
+                } else if (!colunaCloud.isAutoIncrement()
                         && colunaCloud.getDefaultValor() != null
                         && !colunaCloud.getDefaultValor().isBlank()) {
                     addColumn.append(" DEFAULT ").append(colunaCloud.getDefaultValor());
@@ -132,7 +145,8 @@ public class AtualizarEstruturaService {
 
                 // NOT NULL exige valores — backfill automático do cloud na sincronização
                 if (!colunaCloud.isNullable()) {
-                    if (colunaCloud.isAutoIncrement()
+                    if (colunaCloud.isGerada()
+                            || colunaCloud.isAutoIncrement()
                             || colunaCloud.getDefaultValor() != null
                             && !colunaCloud.getDefaultValor().isBlank()) {
                         resultado.getAlteracoes().add(
@@ -151,6 +165,7 @@ public class AtualizarEstruturaService {
             compararTipoColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
             compararNullableColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
             compararDefaultColuna(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
+            compararColunaGerada(resultado, nomeTabela, nomeColuna, colunaCloud, colunaLocal);
         });
     }
 
@@ -164,8 +179,7 @@ public class AtualizarEstruturaService {
             Coluna cloud,
             Coluna local) {
 
-        // AUTO-INCREMENTO NÃO ALTERA TIPO
-        if (cloud.isAutoIncrement() || local.isAutoIncrement()) {
+        if (cloud.isAutoIncrement() || local.isAutoIncrement() || cloud.isGerada() || local.isGerada()) {
             return;
         }
 
@@ -221,8 +235,7 @@ public class AtualizarEstruturaService {
             Coluna cloud,
             Coluna local) {
 
-        // DEFAULT NÃO SE APLICA A SERIAL / IDENTITY
-        if (cloud.isAutoIncrement() || local.isAutoIncrement()) {
+        if (cloud.isAutoIncrement() || local.isAutoIncrement() || cloud.isGerada() || local.isGerada()) {
             return;
         }
 
@@ -246,6 +259,62 @@ public class AtualizarEstruturaService {
                             nomeColuna,
                             cloud.getDefaultValor()));
         }
+    }
+
+    private void compararColunaGerada(
+            ResultadoComparacao resultado,
+            String nomeTabela,
+            String nomeColuna,
+            Coluna cloud,
+            Coluna local) {
+
+        if (!cloud.isGerada()) {
+            if (local.isGerada()) {
+                resultado.getColunasAlteradas().add(nomeColuna);
+                resultado.getAlteracoes().add(
+                        String.format(
+                                "ALTER TABLE %s ALTER COLUMN %s DROP EXPRESSION;",
+                                nomeTabela,
+                                nomeColuna));
+            }
+            return;
+        }
+
+        String expressaoCloud = cloud.getExpressaoGerada() != null ? cloud.getExpressaoGerada().trim() : "";
+        if (expressaoCloud.isBlank()) {
+            return;
+        }
+
+        if (!local.isGerada()) {
+            resultado.getColunasAlteradas().add(nomeColuna);
+            if (local.getDefaultValor() != null && !local.getDefaultValor().isBlank()) {
+                resultado.getAlteracoes().add(
+                        String.format(
+                                "ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT;",
+                                nomeTabela,
+                                nomeColuna));
+            }
+            resultado.getAlteracoes().add(
+                    String.format(
+                            "ALTER TABLE %s ALTER COLUMN %s ADD GENERATED ALWAYS AS (%s) STORED;",
+                            nomeTabela,
+                            nomeColuna,
+                            expressaoCloud));
+            return;
+        }
+
+        String expressaoLocal = local.getExpressaoGerada() != null ? local.getExpressaoGerada().trim() : "";
+        if (expressaoCloud.equalsIgnoreCase(expressaoLocal)) {
+            return;
+        }
+
+        resultado.getColunasAlteradas().add(nomeColuna);
+        resultado.getAlteracoes().add(
+                String.format(
+                        "ALTER TABLE %s ALTER COLUMN %s SET EXPRESSION AS (%s);",
+                        nomeTabela,
+                        nomeColuna,
+                        expressaoCloud));
     }
 
     // =========================================================
