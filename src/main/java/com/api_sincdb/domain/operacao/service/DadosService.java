@@ -105,11 +105,13 @@ public class DadosService {
 
         String usuario = jwtHelper.extrairUsuario(token);
 
-        Pair<Connection, Connection> conexoes = estruturaDadosUtils.abrirConexoes(database, token);
-        Connection cloud = conexoes.getLeft();
-        Connection local = conexoes.getRight();
+        Connection cloud = null;
+        Connection local = null;
 
         try {
+            Pair<Connection, Connection> conexoes = estruturaDadosUtils.abrirConexoes(database, token);
+            cloud = conexoes.getLeft();
+            local = conexoes.getRight();
 
             sincronizacaoSchemaService.iniciar(database, esquema, usuario, TipoOperacao.DADOS);
 

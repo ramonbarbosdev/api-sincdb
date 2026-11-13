@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.api_sincdb.config.ConexaoBanco;
 import com.api_sincdb.enums.TipoConexao;
+import com.api_sincdb.excecoes.MensagemException;
 import com.api_sincdb.util.Pair;
 import com.api_sincdb.util.UtilsSync;
 
@@ -241,8 +242,10 @@ public class DatabaseService {
             List<String> listar = new ArrayList<>();
             listar.add(esquema);
             return listar;
+        } catch (MensagemException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException(e.getMessage(), e);
+            throw MensagemException.erroConexaoBanco(e, database, TipoConexao.LOCAL);
         }
     }
 

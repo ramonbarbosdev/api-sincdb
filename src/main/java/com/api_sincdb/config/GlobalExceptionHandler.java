@@ -18,6 +18,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.api_sincdb.domain.sistema.model.ErrorResponse;
+import com.api_sincdb.excecoes.MensagemException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -68,6 +69,16 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
 
+    }
+
+    @ExceptionHandler(MensagemException.class)
+    public ResponseEntity<ErrorResponse> handleMensagemException(MensagemException ex) {
+        HttpStatus status = ex.getHttpStatus();
+        ErrorResponse error = new ErrorResponse(
+                ex.getMessage(),
+                status.value(),
+                LocalDateTime.now());
+        return ResponseEntity.status(status).body(error);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -124,6 +135,22 @@ public class GlobalExceptionHandler {
     // Handler genérico opcional
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
+        Throwable causa = ex;
+        while (causa.getCause() != null && causa.getCause() != causa) {
+            causa = causa.getCause();
+        }
+        String mensagem = causa.getMessage();
+        if (mensagem != null) {
+            String texto = mensagem.toLowerCase();
+            if (texto.contains("does not exist") && (texto.contains("database") || texto.contains("role"))) {
+                String amigavel = MensagemException.traduzirErroConexaoPostgreSql(ex, null, "local");
+                ErrorResponse error = new ErrorResponse(
+                        amigavel,
+                        HttpStatus.NOT_FOUND.value(),
+                        LocalDateTime.now());
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+            }
+        }
         ErrorResponse error = new ErrorResponse(
                 ex.getMessage(),
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),

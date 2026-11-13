@@ -133,10 +133,30 @@ public class ControleExcecoes {
 
     //     return new ResponseEntity<>(objetoErro, HttpStatus.INTERNAL_SERVER_ERROR);
     // }
+    @ExceptionHandler(MensagemException.class)
+    public ResponseEntity<ObjetoErro> handleMensagemException(MensagemException ex) {
+        ObjetoErro objetoErro = new ObjetoErro();
+        objetoErro.setError(ex.getMessage());
+        objetoErro.setCode(ex.getHttpStatus().toString());
+        return new ResponseEntity<>(objetoErro, ex.getHttpStatus());
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ObjetoErro> handleGenericException(Exception ex) {
+        if (ex instanceof MensagemException mensagem) {
+            return handleMensagemException(mensagem);
+        }
         ObjetoErro objetoErro = new ObjetoErro();
-        objetoErro.setError("Erro: " + ex.getMessage());
+        String detalhe = ex.getMessage();
+        if (detalhe != null) {
+            String texto = detalhe.toLowerCase();
+            if (texto.contains("does not exist") && (texto.contains("database") || texto.contains("role"))) {
+                objetoErro.setError(MensagemException.traduzirErroConexaoPostgreSql(ex, null, "local"));
+                objetoErro.setCode(HttpStatus.NOT_FOUND.toString());
+                return new ResponseEntity<>(objetoErro, HttpStatus.NOT_FOUND);
+            }
+        }
+        objetoErro.setError("Erro: " + detalhe);
         objetoErro.setCode(HttpStatus.INTERNAL_SERVER_ERROR.toString());
 
 		System.out.println("Tipo da exceção: " + ex.getClass().getName());

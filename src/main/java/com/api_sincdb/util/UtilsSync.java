@@ -7,6 +7,7 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import com.api_sincdb.excecoes.MensagemException;
 import com.api_sincdb.websocket.LogPublisher;
 
 @Component
@@ -43,8 +44,7 @@ public class UtilsSync {
             }
         }
         if (listaErro.isEmpty()) {
-            String fallback = e.getMessage() != null ? e.getMessage() : "Falha na sincronização";
-            listaErro.add(fallback);
+            listaErro.add(mensagemAmigavelConexao(e));
         }
         response.put("errors", listaErro);
         response.put("tabelas_afetadas", comErro.isEmpty() && detalhes != null ? detalhes : comErro);
@@ -62,10 +62,11 @@ public class UtilsSync {
             anexarErrosDeDetalhes(response, detalhes, e);
         }
 
-        logPublisher.enviarLog(e.getMessage());
+        String mensagemAmigavel = mensagemAmigavelConexao(e);
+        logPublisher.enviarLog(mensagemAmigavel);
 
         String errorType = e.getClass().getSimpleName();
-        String details = e.getMessage();
+        String details = mensagemAmigavel;
         Object errors = response.get("errors");
         if (errors instanceof List<?> list && !list.isEmpty() && list.get(0) != null) {
             details = String.valueOf(list.get(0));
@@ -75,6 +76,14 @@ public class UtilsSync {
         response.put("erro", errorType);
         response.put("error", "Erro durante sincronização");
         response.put("detalhes", details);
+    }
+
+    private String mensagemAmigavelConexao(Exception e) {
+        String amigavel = MensagemException.traduzirErroConexaoPostgreSql(e, null, "local");
+        if (amigavel != null && !amigavel.isBlank()) {
+            return amigavel;
+        }
+        return e.getMessage() != null ? e.getMessage() : "Falha na sincronização";
     }
 
     public void tratarErroCancelamento(Map<String, Object> response, Exception e) {

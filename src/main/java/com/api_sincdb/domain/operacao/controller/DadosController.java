@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.api_sincdb.domain.operacao.dto.EstruturaResponse;
+import com.api_sincdb.excecoes.MensagemException;
 import com.api_sincdb.domain.operacao.dto.ResumoDTO;
 import com.api_sincdb.domain.operacao.service.DadosService;
 import com.api_sincdb.security.JWTTokenAutenticacaoService;
@@ -75,7 +76,7 @@ public class DadosController {
 			erroResponse.setEsquema(esquema);
 			erroResponse.setGeradoEm(LocalDateTime.now());
 			ResumoDTO resumo = new ResumoDTO();
-			resumo.setMensagem(e.getMessage());
+			resumo.setMensagem(MensagemException.traduzirErroConexaoPostgreSql(e, base, "local"));
 			resumo.setPodeExecutar(false);
 			resumo.setPossuiOperacoesPerigosas(false);
 			erroResponse.setResumo(resumo);
@@ -129,7 +130,7 @@ public class DadosController {
 			erroResponse.setEsquema(esquema);
 			erroResponse.setGeradoEm(LocalDateTime.now());
 			ResumoDTO resumo = new ResumoDTO();
-			resumo.setMensagem(e.getMessage());
+			resumo.setMensagem(MensagemException.traduzirErroConexaoPostgreSql(e, base, "local"));
 			resumo.setPodeExecutar(false);
 			resumo.setPossuiOperacoesPerigosas(false);
 			erroResponse.setResumo(resumo);
