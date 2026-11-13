@@ -8,9 +8,12 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 
 import java.util.List;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.api_sincdb.util.MetadadosColunaPostgres;
+import com.api_sincdb.util.UtilsSync;
 import com.api_sincdb.websocket.LogPublisher;
 
 @Service
@@ -22,10 +25,17 @@ public class CriarInsertsDadosService {
     @Autowired
     private LogPublisher logPublisher;
 
+    @Autowired
+    private UtilsSync utilsSync;
+
     public List<String> cargaInicialCompleta(Connection conexaoCloud, Connection conexaoLocal, String tabela)
             throws SQLException {
 
         List<String> sqlCache = new ArrayList<>();
+        String schema = utilsSync.extrairSchema(tabela);
+        String nomeTabela = utilsSync.extrairTabela(tabela);
+        Set<String> colunasGeradas = MetadadosColunaPostgres.carregarNomesColunasGeradas(
+                conexaoCloud, schema, nomeTabela);
 
         final int BATCH_SIZE = 1000;
         final int PAGE_SIZE = 50000;
@@ -47,7 +57,7 @@ public class CriarInsertsDadosService {
                             String sql;
 
                             try {
-                                sql = insertSqlBuilderService.construirInsertSQL(tabela, rs);
+                                sql = insertSqlBuilderService.construirInsertSQL(tabela, rs, colunasGeradas);
                             } catch (Exception ex) {
                                 logPublisher.enviarLog("Erro ao construir SQL para tabela " + tabela + ": " + ex);
                                 throw new SQLException("Falha ao gerar INSERT da tabela " + tabela, ex);

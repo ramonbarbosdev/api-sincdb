@@ -96,6 +96,9 @@ public final class SyncErrorFormatter {
         if ("23503".equals(sqlState)) {
             return "violação de chave estrangeira";
         }
+        if ("428C9".equals(sqlState)) {
+            return "coluna gerada (GENERATED) não deve receber valor no INSERT; o SyncDB deve omitir essa coluna ao copiar dados";
+        }
         return null;
     }
 

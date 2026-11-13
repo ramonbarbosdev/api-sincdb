@@ -1,7 +1,5 @@
 package com.api_sincdb.domain.operacao.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.postgresql.util.PGobject;
 import org.springframework.stereotype.Service;
@@ -10,20 +8,26 @@ import java.math.BigDecimal;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
-import java.util.Date;
 
 @Service
 public class InsertSqlBuilderService {
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    public static String construirInsertSQL(String tabela, ResultSet rs) throws SQLException {
+    public String construirInsertSQL(String tabela, ResultSet rs) throws SQLException {
+        return construirInsertSQL(tabela, rs, Set.of());
+    }
+
+    public String construirInsertSQL(String tabela, ResultSet rs, Set<String> colunasExcluir) throws SQLException {
         ResultSetMetaData meta = rs.getMetaData();
-        int colCount = meta.getColumnCount();
+        List<Integer> indices = indicesColunasInclusas(meta, colunasExcluir);
+        if (indices.isEmpty()) {
+            throw new SQLException("Nenhuma coluna disponível para INSERT em " + tabela);
+        }
 
         boolean temIdentity = false;
-        for (int i = 1; i <= colCount; i++) {
-            if (meta.isAutoIncrement(i)) {
+        for (int index : indices) {
+            if (meta.isAutoIncrement(index)) {
                 temIdentity = true;
                 break;
             }
@@ -33,46 +37,60 @@ public class InsertSqlBuilderService {
                 .append(tabela)
                 .append(" (");
 
-        // Campos
-        for (int i = 1; i <= colCount; i++) {
-            sql.append(meta.getColumnName(i));
-            if (i < colCount)
+        for (int pos = 0; pos < indices.size(); pos++) {
+            sql.append(meta.getColumnName(indices.get(pos)));
+            if (pos < indices.size() - 1) {
                 sql.append(", ");
+            }
         }
 
-        // Gera ALWAYS AS IDENTITY rejeita valor explícito sem OVERRIDING SYSTEM VALUE
         sql.append(") ");
         if (temIdentity) {
             sql.append("OVERRIDING SYSTEM VALUE ");
         }
         sql.append("VALUES (");
 
-        // Valores
-        for (int i = 1; i <= colCount; i++) {
-            Object value = rs.getObject(i);
-            String columnType = meta.getColumnTypeName(i);
-
+        for (int pos = 0; pos < indices.size(); pos++) {
+            int index = indices.get(pos);
+            Object value = rs.getObject(index);
+            String columnType = meta.getColumnTypeName(index);
             sql.append(convertValue(value, columnType));
-
-            if (i < colCount)
+            if (pos < indices.size() - 1) {
                 sql.append(", ");
+            }
         }
 
         sql.append(");");
         return sql.toString();
     }
 
-    // ================================================================
-    // CONVERSÃO CENTRALIZADA
-    // ================================================================
+    static List<Integer> indicesColunasInclusas(ResultSetMetaData meta, Set<String> colunasExcluir)
+            throws SQLException {
+        Set<String> excluir = colunasExcluir == null ? Set.of() : colunasExcluir;
+        Set<String> excluirLower = new HashSet<>();
+        for (String nome : excluir) {
+            if (nome != null && !nome.isBlank()) {
+                excluirLower.add(nome.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+
+        List<Integer> indices = new ArrayList<>();
+        int colCount = meta.getColumnCount();
+        for (int i = 1; i <= colCount; i++) {
+            String nome = meta.getColumnName(i);
+            if (nome != null && excluirLower.contains(nome.trim().toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            indices.add(i);
+        }
+        return indices;
+    }
+
     private static String convertValue(Object value, String sqlType) throws SQLException {
 
         if (value == null)
             return "NULL";
 
-        // ----------------------------------------------------
-        // Trata PGobject (caso venha como json/jsonb)
-        // ----------------------------------------------------
         if (value instanceof PGobject pg) {
 
             String tipo = pg.getType();
@@ -91,9 +109,6 @@ public class InsertSqlBuilderService {
             return "'" + escape(conteudo) + "'";
         }
 
-        // ----------------------------------------------------
-        // Campos TEXT/VARCHAR — sempre tratar como texto, nunca como JSON
-        // ----------------------------------------------------
         if (value instanceof String s) {
 
             if (isJsonColumn(sqlType)) {
@@ -106,9 +121,6 @@ public class InsertSqlBuilderService {
             return "'" + escape(s) + "'";
         }
 
-        // ----------------------------------------------------
-        // Datas
-        // ----------------------------------------------------
         if (value instanceof Timestamp t) {
             return "'" + t.toString() + "'";
         }
@@ -128,43 +140,25 @@ public class InsertSqlBuilderService {
             return "'" + odt + "'";
         }
 
-        // ----------------------------------------------------
-        // Numéricos
-        // ----------------------------------------------------
         if (value instanceof BigDecimal bd) {
             return bd.toPlainString();
         }
 
-        // ----------------------------------------------------
-        // Boolean
-        // ----------------------------------------------------
         if (value instanceof Boolean b) {
             return b ? "TRUE" : "FALSE";
         }
 
-        // ----------------------------------------------------
-        // Enum
-        // ----------------------------------------------------
         if (value instanceof Enum<?> e) {
             return "'" + escape(e.name()) + "'";
         }
 
-        // ----------------------------------------------------
-        // BYTEA
-        // ----------------------------------------------------
         if (value instanceof byte[] bytes) {
             return "E'\\\\x" + bytesToHex(bytes) + "'";
         }
 
-        // ----------------------------------------------------
-        // Default
-        // ----------------------------------------------------
         return "'" + escape(value.toString()) + "'";
     }
 
-    // ================================================================
-    // JSON — apenas quando a coluna for json/jsonb
-    // ================================================================
     private static boolean isJsonColumn(String sqlType) {
         if (sqlType == null)
             return false;
@@ -181,14 +175,12 @@ public class InsertSqlBuilderService {
 
     private static String normalizeJsonStrict(String raw) throws SQLException {
 
-        // primeira tentativa: JSON está válida -> retorna como está
         try {
             mapper.readTree(raw);
             return raw;
         } catch (Exception ignored) {
         }
 
-        // tntar corrigir aspas duplas acidentais "" -> " somente se isso resolver
         String fixed1 = raw.replaceAll("(?<!\\\\)\"\"", "\"");
         try {
             mapper.readTree(fixed1);
@@ -196,7 +188,6 @@ public class InsertSqlBuilderService {
         } catch (Exception ignored) {
         }
 
-        // tentar remover escapes quebrados
         String fixed2 = raw.replace("\\\"", "\"");
         try {
             mapper.readTree(fixed2);
@@ -204,7 +195,6 @@ public class InsertSqlBuilderService {
         } catch (Exception ignored) {
         }
 
-        // ultima tentativa: restaurar aspas corretas ao redor de chaves/arrays
         String fixed3 = raw.trim();
         if (fixed3.startsWith("\"") && fixed3.endsWith("\"")) {
             fixed3 = fixed3.substring(1, fixed3.length() - 1);
@@ -216,7 +206,6 @@ public class InsertSqlBuilderService {
         } catch (Exception ignored) {
         }
 
-        // nada funcionou -> JSON definitivamente inválido
         throw new SQLException("JSON inválido e não pôde ser normalizado: " + raw);
     }
 
@@ -225,9 +214,6 @@ public class InsertSqlBuilderService {
         return "$" + tag + "$" + json + "$" + tag + "$::jsonb";
     }
 
-    // ================================================================
-    // UTILITÁRIOS
-    // ================================================================
     private static String escape(String s) {
         if (s == null)
             return null;

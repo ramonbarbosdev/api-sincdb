@@ -79,4 +79,9 @@ public final class MetadadosColunaPostgres {
         }
         return " GENERATED ALWAYS AS (" + expressao.trim() + ") STORED";
     }
+
+    public static Set<String> carregarNomesColunasGeradas(Connection conexao, String schema, String tabela)
+            throws SQLException {
+        return new HashSet<>(carregarExpressoesGeradas(conexao, schema, tabela).keySet());
+    }
 }

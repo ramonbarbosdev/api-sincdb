@@ -16,6 +16,9 @@ import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.api_sincdb.util.MetadadosColunaPostgres;
+import com.api_sincdb.util.UtilsSync;
+
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.table;
 
@@ -24,6 +27,9 @@ public class AtualizarDadosService {
 
     @Autowired
     private InsertSqlBuilderService insertSqlBuilderService;
+
+    @Autowired
+    private UtilsSync utilsSync;
 
     public List<String> verificarConsistenciaRegistros(Connection conexaoLocal, Connection conexaoCloud, String tabela,
             String pkColumn) throws SQLException {
@@ -104,12 +110,16 @@ public class AtualizarDadosService {
         String sql = "SELECT * FROM " + tabela + " WHERE " + pkColumn + " IN (" + inClause + ")";
 
         List<String> inserts = new ArrayList<>();
+        String schema = utilsSync.extrairSchema(tabela);
+        String nomeTabela = utilsSync.extrairTabela(tabela);
+        Set<String> colunasGeradas = MetadadosColunaPostgres.carregarNomesColunasGeradas(
+                conexaoCloud, schema, nomeTabela);
 
         try (Statement stmt = conexaoCloud.createStatement();
                 ResultSet rs = stmt.executeQuery(sql)) {
 
             while (rs.next()) {
-                inserts.add(insertSqlBuilderService.construirInsertSQL(tabela, rs));
+                inserts.add(insertSqlBuilderService.construirInsertSQL(tabela, rs, colunasGeradas));
             }
         }
 
